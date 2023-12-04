@@ -1,0 +1,42 @@
+package searchengine.model;
+
+import jakarta.persistence.*;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import lombok.NonNull;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Data
+@NoArgsConstructor
+@Entity
+@Table(name = "sites")
+public class Site {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private int id;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @NonNull
+    private IndexingStatus status;
+
+    @Column(name = "status_time", columnDefinition = "DATETIME", nullable = false)
+    @NonNull
+    private LocalDateTime statusTime;
+
+    @Column(name = "last_error", columnDefinition = "TEXT")
+    private String lastError;
+
+    @Column(columnDefinition = "VARCHAR(255)", nullable = false)
+    @NonNull
+    private String url;
+
+    // Имя уникально, т.к. индексировать один и тот же сайт более 2 раз нет смысла. Также это ускоряет удаление.
+    @Column(columnDefinition = "VARCHAR(255)", nullable = false, unique = true)
+    @NonNull
+    private String name;
+
+}
