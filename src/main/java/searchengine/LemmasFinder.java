@@ -1,26 +1,31 @@
 package searchengine;
 
+import lombok.RequiredArgsConstructor;
 import org.apache.lucene.morphology.LuceneMorphology;
 import org.apache.lucene.morphology.english.EnglishLuceneMorphology;
 import org.apache.lucene.morphology.russian.RussianLuceneMorphology;
 import org.jsoup.Jsoup;
+import org.springframework.stereotype.Component;
 
-import java.io.IOException;
-import java.util.*;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
 import java.util.regex.Pattern;
 
+@RequiredArgsConstructor
+@Component
 public class LemmasFinder {
 
     private static final List<String> PARTICLES = Arrays.asList("МЕЖД", "СОЮЗ", "ПРЕДЛ", "ЧАСТ",
             "PREP", "VBE");
 
-    private final LuceneMorphology russianMorphology;
-    private final LuceneMorphology englishMorphology;
+    private final RussianLuceneMorphology russianMorphology;
+    private final EnglishLuceneMorphology englishMorphology;
 
-    public LemmasFinder() throws IOException {
-        russianMorphology = new RussianLuceneMorphology();
-        englishMorphology = new EnglishLuceneMorphology();
-    }
+//    public LemmasFinder() throws IOException {
+//        russianMorphology = new RussianLuceneMorphology();
+//        englishMorphology = new EnglishLuceneMorphology();
+//    }
 
 
     /**

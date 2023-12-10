@@ -8,14 +8,17 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+import searchengine.LemmasFinder;
 import searchengine.config.SearchBot;
 import searchengine.model.*;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
 import java.util.concurrent.RecursiveAction;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @RequiredArgsConstructor
 @Getter
@@ -24,9 +27,11 @@ import java.util.concurrent.RecursiveAction;
 public class PageAnalyzer extends RecursiveAction {
 
     private final ApplicationContext applicationContext;
+    private final SearchBot searchBot;
     private final SiteRepository siteRepository;
     private final PageRepository pageRepository;
-    private final SearchBot searchBot;
+    private final LemmaRepository lemmaRepository;
+    private final IndexRepository indexRepository;
 
     private final Random random = new Random();
 
@@ -199,6 +204,8 @@ public class PageAnalyzer extends RecursiveAction {
         page.setContent(html);
         savePage(page);
 
+        updateSite(site);
+
 //        var taskList = new ArrayList<PageAnalyzer>();
 
         // URL начинается с переданного корня и не содержит ссылок на внутренние элементы страницы (не содержит #)
@@ -293,6 +300,174 @@ public class PageAnalyzer extends RecursiveAction {
         }
     }
 
+    public void analyzePage() {
+
+        var site = page.getSite();
+
+        Document document;
+        int statusCode;
+
+        try {
+            // По умолчанию выполняется нужный метод - Get()
+            var response = Jsoup.connect(page.getUrl())
+                    .userAgent(searchBot.getUserAgent())
+                    .referrer(searchBot.getReferer())
+//                    .ignoreContentType(true)
+                    .execute();
+            statusCode = response.statusCode();
+            document = response.parse();
+        } catch (HttpStatusException e) {
+            // Ошибка не связана напрямую с программой - подробное описание анализировать не требуется
+            System.err.println(e.getLocalizedMessage());
+
+            statusCode = e.getStatusCode();
+            page.setCode(statusCode);
+            savePage(page);
+
+            saveError(site, e.getLocalizedMessage());
+
+            return;
+        } catch (Exception e) {
+            e.printStackTrace();
+
+            page.setCode(500);
+            page.setContent("jsoup"); // TODO Удалить после отладки
+            savePage(page);
+
+            saveError(site, e.getLocalizedMessage());
+
+            return;
+        }
+
+        var html = document.html();
+        byte[] b = html.getBytes(StandardCharsets.UTF_8);
+        html = new String(b, StandardCharsets.UTF_8);
+
+        page.setCode(statusCode);
+        page.setContent(html);
+        savePage(page);
+
+        updateSite(site);
+
+        // Леммы
+        var lemmasFinder = applicationContext.getBean(LemmasFinder.class);
+        var lemmas = lemmasFinder.findLemmasInHtml(html);
+
+        synchronized (page) {
+
+            var existingLemmas = lemmaRepository.findBySiteAndLemmaIn(site, lemmas.keySet());
+            var lemmasCache = existingLemmas.stream()
+                    .collect(Collectors.toMap(Lemma::getLemma, Function.identity()));
+
+            var usedIndexes = indexRepository.findByPage(page);
+            var indexesCache = usedIndexes.stream()
+                    .collect(Collectors.toMap(Index::getLemma, Function.identity()));
+
+            // Страницу могут и обновить. Если индекс с леммой уже был, значит не надо корректировать frequency в лемме
+            var usedLemmas = usedIndexes.stream()
+                    .map(Index::getLemma)
+                    .distinct().toList();
+
+            List<Lemma> changedLemmas = new LinkedList<>();
+            List<Lemma> unchangedLemmas = new LinkedList<>();
+            List<Index> changedIndexes = new LinkedList<>();
+            List<Index> unchangedIndexes = new LinkedList<>();
+
+            for (var lemmaEntry : lemmas.entrySet()) {
+
+                // ЛЕММА
+
+                var lemmaName = lemmaEntry.getKey();
+
+                var lemma = lemmasCache.get(lemmaName);
+                var frequency = 1;
+                var newLemma = lemma == null;
+                var saveLemma = true;
+
+                if (newLemma) {
+                    lemma = new Lemma();
+                    lemma.setSite(site);
+                    lemma.setLemma(lemmaName);
+                } else {
+                    lemmasCache.remove(lemmaName); // Более не нужно
+
+                    if (usedLemmas.contains(lemma)) {
+                        // Статистика лемм не изменилась. Перезаписывать не нужно.
+                        saveLemma = false;
+                        unchangedLemmas.add(lemma);
+                    } else {
+                        frequency += lemma.getFrequency();
+                    }
+                }
+
+                if (saveLemma) {
+                    lemma.setFrequency(frequency);
+                    changedLemmas.add(lemma);
+                }
+
+
+                // ИНДЕКС
+
+                var rank = lemmaEntry.getValue();
+                Index index = null;
+                var newIndex = true;
+
+                if (!newLemma) {
+                    index = indexesCache.get(lemma);
+                    newIndex = index == null;
+
+                    if (!newIndex) {
+                        indexesCache.remove(lemma); // Более не нужно
+
+                        if (index.getRank() == rank) {
+                            unchangedIndexes.add(index);
+                            continue;
+                        }
+                    }
+                }
+
+                if (newIndex) {
+                    index = new Index();
+                    index.setPage(page);
+                    index.setLemma(lemma);
+                }
+
+                index.setRank(rank);
+                changedIndexes.add(index);
+            }
+
+            // Проверка неиспользованных лемм: корректировка frequency или удаление леммы
+            var checkingLemmas = usedLemmas.stream()
+                    .filter(lemma -> !changedLemmas.contains(lemma))
+                    .filter(lemma -> !unchangedLemmas.contains(lemma))
+                    .collect(Collectors.groupingBy(lemma -> lemma.getFrequency() > 1));
+
+            // Леммы, у которых frequency = 1, после корректировки станут = 0. Их можно сразу удалить.
+            var deletingLemmas = checkingLemmas.getOrDefault(false, Collections.emptyList());
+
+            // Уменьшаем значения frequency, т.к. уменьшилось количество страниц, на которых упоминается лемма
+            for (Lemma lemma : checkingLemmas.getOrDefault(true, Collections.emptyList())) {
+                var frequency = lemma.getFrequency();
+                lemma.setFrequency(--frequency);
+
+                changedLemmas.add(lemma);
+            }
+
+            var deletingIndexes =usedIndexes.stream()
+                    .filter(index -> !changedIndexes.contains(index))
+                    .filter(index -> !unchangedIndexes.contains(index))
+                    .toList();
+
+            try {
+                saveLemmatizationChanges(deletingLemmas, changedLemmas, deletingIndexes, changedIndexes);
+            } catch (Exception e) {
+                e.printStackTrace();
+                saveError(site, e.getLocalizedMessage());
+            }
+
+        }
+    }
+
     private synchronized void savePage(Page page) {
         pageRepository.save(page);
     }
@@ -320,8 +495,8 @@ public class PageAnalyzer extends RecursiveAction {
 //
 ////        synchronized (site) {
 //
-//        var foundCount = pageRepository.findBySiteAndPath(site, path).size();
-//        if (foundCount != 0) {
+//        newPage = pageRepository.findBySiteAndPath(site, path);
+//        if (newPage == null) {
 //            return null;
 //        }
 //
@@ -371,5 +546,14 @@ public class PageAnalyzer extends RecursiveAction {
         } catch (Exception e) {
             e.printStackTrace(System.err);
         }
+    }
+
+    @Transactional
+    private void saveLemmatizationChanges(List<Lemma> deletingLemmas, List<Lemma> savingLemmas,
+                                          List<Index> deletingIndexes, List<Index> savingIndexes){
+        indexRepository.deleteAll(deletingIndexes);
+        lemmaRepository.deleteAll(deletingLemmas);
+        lemmaRepository.saveAll(savingLemmas);
+        indexRepository.saveAll(savingIndexes);
     }
 }

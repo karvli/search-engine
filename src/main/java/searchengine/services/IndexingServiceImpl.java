@@ -1,9 +1,8 @@
 package searchengine.services;
 
 import lombok.RequiredArgsConstructor;
+import lombok.val;
 import org.springframework.context.ApplicationContext;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import searchengine.config.Site;
 import searchengine.config.SitesList;
@@ -162,7 +161,9 @@ public class IndexingServiceImpl implements IndexingService{
 
 //        indexingThreads.forEach(Thread::interrupt);
 //        indexingTasks.forEach(pageAnalyzer -> pageAnalyzer.quietlyJoinUninterruptibly());
-        indexingPool.shutdownNow();
+        if (indexingPool != null) {
+            indexingPool.shutdownNow();
+        }
 
         var now = LocalDateTime.now();
 
@@ -212,16 +213,18 @@ public class IndexingServiceImpl implements IndexingService{
             site.setName(configSite.getName());
             site.setUrl(configSite.getUrl());
 
-            siteRepository.save(site);
+            // По идее, статусом управляет общий процесс, но т.к. он не запущен, меняем статус
+            site.setStatus(IndexingStatus.INDEXING);
         }
+        site.setStatusTime(LocalDateTime.now());
+        siteRepository.save(site);
 
         var path = url.substring(configSite.getUrl().length());
         path = PageAnalyzer.getNormalizedPath(site, path);
 
         Page page = null;
         if (!newSite) {
-            // TODO Пересмотреть работу со страницами
-            page = pageRepository.findBySiteAndPath(site, path).get(0);
+            page = pageRepository.findBySiteAndPath(site, path);
         }
 
         if (page == null) {
@@ -238,7 +241,20 @@ public class IndexingServiceImpl implements IndexingService{
                     .build();
         }
 
+        val finalSite = site;
+        val finalPage = page;
 
+        new Thread(() -> {
+            var pageAnalyzer = applicationContext.getBean(PageAnalyzer.class);
+            pageAnalyzer.setPage(finalPage);
+            pageAnalyzer.analyzePage();
+
+            if (newSite) {
+                // Если общего процесса нет, определяем статус по этой странице
+                finalSite.setStatus(IndexingStatus.INDEXED);
+                siteRepository.save(finalSite);
+            }
+        }).start();
 
         return IndexingResponse.builder()
                 .result(true)
