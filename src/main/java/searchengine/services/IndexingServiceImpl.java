@@ -20,7 +20,7 @@ import java.util.concurrent.ForkJoinPool;
 
 @Service
 @RequiredArgsConstructor
-public class IndexingServiceImpl implements IndexingService{
+public class IndexingServiceImpl implements IndexingService {
 
     private final SitesList sites;
     private final SiteRepository siteRepository;
@@ -62,7 +62,7 @@ public class IndexingServiceImpl implements IndexingService{
         siteRepository.deleteAll(currentSites);
 
         indexingPool = new ForkJoinPool();
-//        indexingTasks = new ArrayList<>();
+        indexingTasks = new ArrayList<>();
 //        indexingThreads = new ArrayList<>();
 
         var now = LocalDateTime.now();
@@ -120,7 +120,7 @@ public class IndexingServiceImpl implements IndexingService{
 //            task.fork();
 //            taskList.add(task);
 
-//            indexingTasks.add(task);
+            indexingTasks.add(task);
 
 //            var thread = new Thread(() -> {
 //                var task = applicationContext.getBean(PageAnalyzer.class);
@@ -159,20 +159,39 @@ public class IndexingServiceImpl implements IndexingService{
                     .build();
         }
 
-//        indexingThreads.forEach(Thread::interrupt);
-//        indexingTasks.forEach(pageAnalyzer -> pageAnalyzer.quietlyJoinUninterruptibly());
-        if (indexingPool != null) {
-            indexingPool.shutdownNow();
-        }
+        new Thread(() -> {
+            //        indexingThreads.forEach(Thread::interrupt);
+            if (indexingPool != null) {
+//                indexingPool.shutdown();
+                indexingPool.shutdownNow();
 
-        var now = LocalDateTime.now();
 
-        for (var indexingSite : indexingSites) {
-            indexingSite.setStatus(IndexingStatus.FAILED);
-            indexingSite.setStatusTime(now);
-        }
+//                try {
+//                    var terminated = false;
+//                    while (!terminated) {
+//                        terminated = indexingPool.awaitTermination(5, TimeUnit.SECONDS);
+//                    }
+//                } catch (Exception e) {
+//                    e.printStackTrace();
+//                }
 
-        siteRepository.saveAll(indexingSites);
+            }
+
+            // TODO Дождаться завершения ForkJoinPool или отменить Task
+//            if (indexingTasks != null) {
+////                indexingTasks.forEach(pageAnalyzer -> pageAnalyzer.cancel(true));
+//                indexingTasks.forEach(ForkJoinTask::quietlyJoin);
+//            }
+
+            var now = LocalDateTime.now();
+            for (var indexingSite : indexingSites) {
+                indexingSite.setStatus(IndexingStatus.FAILED);
+                indexingSite.setLastError("Индексация остановлена пользователем");
+                indexingSite.setStatusTime(now);
+            }
+
+            siteRepository.saveAll(indexingSites);
+        }).start();
 
         return IndexingResponse.builder()
                 .result(true)
@@ -192,7 +211,7 @@ public class IndexingServiceImpl implements IndexingService{
 
         Site configSite = null;
 
-        for (var site: sites.getSites()) {
+        for (var site : sites.getSites()) {
             var siteUrl = site.getUrl();
             if (url.startsWith(siteUrl)) {
                 configSite = site;

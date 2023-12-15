@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 
 @Data
 @NoArgsConstructor
@@ -16,11 +18,13 @@ public class Index {
     private int id;
 
     @ManyToOne(cascade = CascadeType.MERGE)
+    @OnDelete(action = OnDeleteAction.CASCADE) // Удалять индекс при удалении страницы
     @JoinColumn(nullable = false)
     @NonNull
     private Page page;
 
     @ManyToOne(cascade = CascadeType.MERGE)
+    @OnDelete(action = OnDeleteAction.CASCADE) // Удалять индекс при удалении леммы
     @JoinColumn(nullable = false)
     @NonNull
     private Lemma lemma;

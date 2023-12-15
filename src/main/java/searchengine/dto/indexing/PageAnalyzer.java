@@ -5,8 +5,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 import org.jsoup.HttpStatusException;
 import org.jsoup.Jsoup;
+import org.jsoup.UnsupportedMimeTypeException;
 import org.jsoup.nodes.Document;
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import searchengine.LemmasFinder;
@@ -15,7 +18,10 @@ import searchengine.model.*;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.Collections;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Random;
 import java.util.concurrent.RecursiveAction;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -24,6 +30,7 @@ import java.util.stream.Collectors;
 @Getter
 @Setter
 @Component
+@Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
 public class PageAnalyzer extends RecursiveAction {
 
     private final ApplicationContext applicationContext;
@@ -130,6 +137,8 @@ public class PageAnalyzer extends RecursiveAction {
         Document document;
         int statusCode;
 
+        if (isCancelled()) {System.out.println("Остановлена"); return;}
+
         randomTimeout();
 
 //        synchronized (site) {
@@ -162,14 +171,23 @@ public class PageAnalyzer extends RecursiveAction {
             page.setCode(statusCode);
             savePage(page);
 
-            saveError(site, e.getLocalizedMessage());
+            updateSite(site);
 
+            return;
+        } catch (UnsupportedMimeTypeException e) {
+            // По ссылке не страница, а, например, картинка. Не ошибка. Но такие страницы не нужны - удаляем их.
+            System.err.println(e.getLocalizedMessage());
+
+            page.setCode(415); // Unsupported Media Type («Неподдерживаемый тип данных»)
+            savePage(page);
+
+            updateSite(site);
             return;
         } catch (Exception e) {
             e.printStackTrace();
 
-            page.setCode(500);
-            page.setContent("jsoup"); // TODO Удалить после отладки
+            page.setCode(500); // Internal Server Error («Внутренняя ошибка сервера»)
+            page.setContent("jsoup: " + e.getLocalizedMessage()); // TODO Удалить после отладки
             savePage(page);
 
             saveError(site, e.getLocalizedMessage());
@@ -206,6 +224,8 @@ public class PageAnalyzer extends RecursiveAction {
 
         updateSite(site);
 
+        if (isCancelled()) {System.out.println("Остановлена"); return;}
+
 //        var taskList = new ArrayList<PageAnalyzer>();
 
         // URL начинается с переданного корня и не содержит ссылок на внутренние элементы страницы (не содержит #)
@@ -235,13 +255,15 @@ public class PageAnalyzer extends RecursiveAction {
                     .distinct()
                     .toList();
 
+            if (isCancelled()) {System.out.println("Остановлена"); return;}
+
             newPages = paths.stream()
                     .filter(p -> !existingPaths.contains(p))
                     .map(path -> {
                         var newPage = new Page();
                         newPage.setSite(site);
                         newPage.setPath(path);
-                        newPage.setCode(102);
+                        newPage.setCode(102); // Processing («Идёт обработка»)
 
                         return newPage;
                     })
@@ -252,12 +274,18 @@ public class PageAnalyzer extends RecursiveAction {
 
         updateSite(site);
 
+        if (isCancelled()) {System.out.println("Остановлена"); return;}
+
+//        var pageNode = applicationContext.getBean(PageNode.class);
+//        pageNode.compute();
+//        var newPages = pageNode.getChildren();
+
         var taskList = newPages.stream()
                 .map(newPage -> {
                     var task = applicationContext.getBean(PageAnalyzer.class);
                     task.setPage(newPage);
                     task.fork();
-                    randomTimeout();
+//                    randomTimeout();
 
                     return task;
                 })
@@ -277,22 +305,26 @@ public class PageAnalyzer extends RecursiveAction {
 
 //        taskList.forEach(ForkJoinTask::join);
 
+        if (isCancelled()) {System.out.println("Остановлена"); return;}
+
         for (var task : taskList) {
             try {
                 task.join();
 //                task.invoke();
 //                ForkJoinPool.commonPool().invoke(task);
-                randomTimeout();
+//                randomTimeout();
             } catch (Exception e) {
                 e.printStackTrace();
 
-                page.setCode(500);
-                page.setContent("taskList"); // TODO Удалить после отладки
+                page.setCode(500); // Internal Server Error («Внутренняя ошибка сервера»)
+                page.setContent("taskList: " + e.getLocalizedMessage()); // TODO Удалить после отладки
                 savePage(page);
 
                 saveError(site, e.getLocalizedMessage());
             }
         }
+
+        if (isCancelled()) {System.out.println("Остановлена"); return;}
 
         if (page.isRoot()) {
             site.setStatus(IndexingStatus.INDEXED);
@@ -330,8 +362,8 @@ public class PageAnalyzer extends RecursiveAction {
         } catch (Exception e) {
             e.printStackTrace();
 
-            page.setCode(500);
-            page.setContent("jsoup"); // TODO Удалить после отладки
+            page.setCode(500); // Internal Server Error («Внутренняя ошибка сервера»)
+            page.setContent("jsoup: " + e.getLocalizedMessage()); // TODO Удалить после отладки
             savePage(page);
 
             saveError(site, e.getLocalizedMessage());
@@ -511,8 +543,8 @@ public class PageAnalyzer extends RecursiveAction {
 //            updateSite(site);
 //        } catch (Exception e) {
 //
-//            page.setCode(500);
-//            page.setContent("task"); // TODO Удалить после отладки
+//            page.setCode(500); // Internal Server Error («Внутренняя ошибка сервера»)
+//            page.setContent("task: " + e.getLocalizedMessage()); // TODO Удалить после отладки
 //            savePage(page);
 //
 //            site.setLastError(e.getLocalizedMessage());
