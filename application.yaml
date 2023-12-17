@@ -21,10 +21,10 @@ indexing-settings:
   sites:
 #    - url: https://www.lenta.ru
 #      name: Лента.ру
-#    - url: https://www.skillbox.ru
-#      name: Skillbox
-    - url: https://www.playback.ru
-      name: PlayBack.Ru
+    - url: https://www.skillbox.ru
+      name: Skillbox
+#    - url: https://www.playback.ru
+#      name: PlayBack.Ru
 
 
 # Настройки приложения
@@ -33,4 +33,4 @@ search-bot-settings:
   referer: http://www.google.com
   requests-interval:
     min: 500
-    max: 3000
+    max: 1000

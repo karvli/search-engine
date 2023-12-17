@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.val;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import searchengine.config.Site;
 import searchengine.config.SitesList;
 import searchengine.dto.indexing.IndexingResponse;
@@ -47,8 +48,6 @@ public class IndexingServiceImpl implements IndexingService {
                     .build();
         }
 
-        siteRepository.deleteAll(currentSites);
-
         indexingPool = new ForkJoinPool();
         indexingTasks = new ArrayList<>();
 //        indexingThreads = new ArrayList<>();
@@ -76,9 +75,6 @@ public class IndexingServiceImpl implements IndexingService {
             rootPages.add(page);
         }
 
-        siteRepository.saveAll(indexingSites);
-        pageRepository.saveAll(rootPages);
-
 //        var taskList = new ArrayList<PageAnalyzer>();
 
 //        var pool = new ForkJoinPool(
@@ -87,16 +83,23 @@ public class IndexingServiceImpl implements IndexingService {
 //                null
 //                , true);
 //        var pool = new ForkJoinPool();
-        for (var page : rootPages) {
-            var task = applicationContext.getBean(PageAnalyzer.class);
-            task.setPage(page);
+
+        new Thread(() -> {
+            siteRepository.deleteAll(currentSites);
+
+            siteRepository.saveAll(indexingSites);
+            pageRepository.saveAll(rootPages);
+
+            for (var page : rootPages) {
+                var task = applicationContext.getBean(PageAnalyzer.class);
+                task.setPage(page);
 //            pool.execute(task);
-            indexingPool.execute(task);
+                indexingPool.execute(task);
 //            commonPool().submit(task);
 //            task.fork();
 //            taskList.add(task);
 
-            indexingTasks.add(task);
+                indexingTasks.add(task);
 
 //            var thread = new Thread(() -> {
 //                var task = applicationContext.getBean(PageAnalyzer.class);
@@ -111,7 +114,16 @@ public class IndexingServiceImpl implements IndexingService {
 //
 //            indexingThreads.add(thread);
 //            thread.start();
-        }
+            }
+        }).start();
+
+//        indexingTasks = rootPages.stream().map(page -> {
+//            var task = applicationContext.getBean(PageAnalyzer.class);
+//            task.setPage(page);
+//            return task;
+//        }).toList();
+//
+//        indexingPool.invokeAll(indexingTasks);
 
 //        taskList.forEach(ForkJoinTask::join);
 
@@ -222,15 +234,13 @@ public class IndexingServiceImpl implements IndexingService {
             page = pageRepository.findBySiteAndPath(site, path);
         }
 
-        if (page != null) {
-            if (page.getCode() == 102) {
-                // Страница уже в очереди на обновление. Дальнейшее действия не требуются.
-                return IndexingResponse.builder()
-                        .result(true)
-                        .build();
-            }
+        var newPage = page == null;
 
-            pageRepository.delete(page); // Удаление Page, Lemma, Index в соответствии с ТЗ
+        if (!newPage && page.getCode() == 102) {
+            // Страница уже в очереди на обновление. Дальнейшее действия не требуются.
+            return IndexingResponse.builder()
+                    .result(true)
+                    .build();
         }
 
         page = new Page();
@@ -244,6 +254,10 @@ public class IndexingServiceImpl implements IndexingService {
         val finalPage = page;
 
         new Thread(() -> {
+            if (!newPage) {
+                deleteLeLemmatizationInfo(finalPage);
+            }
+
             var pageAnalyzer = applicationContext.getBean(PageAnalyzer.class);
             pageAnalyzer.setPage(finalPage);
             pageAnalyzer.analyzePage();
@@ -260,5 +274,14 @@ public class IndexingServiceImpl implements IndexingService {
                 .build();
     }
 
+    // Удаление Page, Lemma, Index в соответствии с ТЗ
+    @Transactional
+    private void deleteLeLemmatizationInfo(Page page) {
+//        synchronized (page) {
+//            synchronized (page.getSite()) {
+                pageRepository.delete(page);
+//            }
+//        }
+    }
 
 }

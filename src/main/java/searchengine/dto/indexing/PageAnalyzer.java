@@ -12,11 +12,10 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
-import searchengine.LemmasFinder;
 import searchengine.config.SearchBot;
 import searchengine.model.*;
+import searchengine.services.LemmasFinder;
 
-import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.LinkedList;
@@ -60,13 +59,7 @@ public class PageAnalyzer extends RecursiveAction {
 
         url = url.toLowerCase();
 
-//        if (!url.startsWith("/")) {
-//            return "/" + url;
-//        }
-
-//        return url;
-
-        // URL может быть указан не с начала корня. Проверка соответствия сайта URL должна была быть ранее.
+        // URL может быть указан не с начала корня. Проверка соответствия сайта URL должна была быть до вызова метода.
         var rootUrl = site.getUrl().toLowerCase();
         if (url.startsWith(rootUrl)) {
             url = url.substring(rootUrl.length());
@@ -79,8 +72,6 @@ public class PageAnalyzer extends RecursiveAction {
                     "URL \"" + url + "\" должен начинаться с \"" + rootUrl + "\" или с \"/\"");
         }
 
-//        var path = url.substring(rootUrl.length());
-
         // Обработка обоих вариантов окончания пути к сайту
         if(!url.startsWith("/")) {
             url = "/" + url;
@@ -91,144 +82,26 @@ public class PageAnalyzer extends RecursiveAction {
 
     private String getNormalizedPath(String url) {
         return getNormalizedPath(page.getSite(), url);
-//        url = url.strip();
-//
-//        // Очистка от лишних параметров
-//        var endIndex = url.indexOf('?');
-//        if (endIndex != -1) {
-//            url = url.substring(0, endIndex);
-//        }
-//
-//        // Приведение к единому виду
-//        if (url.endsWith("/")) {
-//            url = url.substring(0, url.length() - 1);
-//        }
-//
-//        url = url.toLowerCase();
-//
-//        if (!url.startsWith("/")) {
-//            return "/" + url;
-//        }
-//
-//        return url;
-
-//        var rootUrl = page.getSite().getUrl().toLowerCase();
-//
-//        if (!url.startsWith(rootUrl)) {
-//            throw new IllegalArgumentException("URL \"" + url + "\" должен начинаться с \"" + rootUrl + "\" или с
-//            \"/\"");
-//        }
-//
-//        var path = url.substring(rootUrl.length());
-//
-//        // Обработка обоих вариантов окончания пути к сайту
-//        if(!path.startsWith("/")) {
-//            path = "/" + path;
-//        }
-//
-//        return path;
     }
 
     @Override
     protected void compute() {
 
-        var site = page.getSite();
-
-        Document document;
-        int statusCode;
-
-        if (isCancelled()) {System.out.println("Остановлена"); return;}
-
         randomTimeout();
 
-//        synchronized (site) {
-//            try {
-//                var interval = searchBot.getRequestsInterval();
-//                int min = interval.getMin();
-//                var time = min + random.nextInt(interval.getMax() - min + 1); // Интервал миллисекунд
-//                Thread.sleep(time);
-//            } catch (Exception e) {
-//                e.printStackTrace(System.err);
-//            }
-
-        try {
-            // По умолчанию выполняется нужный метод - Get()
-            var response = Jsoup.connect(page.getUrl())
-                    .userAgent(searchBot.getUserAgent())
-                    .referrer(searchBot.getReferer())
-//                        .method(Connection.Method.GET)
-//                    .ignoreContentType(true)
-                    .execute();
-            statusCode = response.statusCode();
-            document = response.parse();
-//            document = connection
-//                    .get();
-        } catch (HttpStatusException e) {
-            // Ошибка не связана напрямую с программой - подробное описание анализировать не требуется
-            System.err.println(e.getLocalizedMessage());
-
-            statusCode = e.getStatusCode();
-            page.setCode(statusCode);
-            savePage(page);
-
-            updateSite(site);
-
+        analyzePage();
+        if (!page.canBeParsed()) {
             return;
-        } catch (UnsupportedMimeTypeException e) {
-            // По ссылке не страница, а, например, картинка. Не ошибка. Но такие страницы не нужны - удаляем их.
-            System.err.println(e.getLocalizedMessage());
-
-            page.setCode(415); // Unsupported Media Type («Неподдерживаемый тип данных»)
-            savePage(page);
-
-            updateSite(site);
-            return;
-        } catch (Exception e) {
-            e.printStackTrace();
-
-            page.setCode(500); // Internal Server Error («Внутренняя ошибка сервера»)
-            page.setContent("jsoup: " + e.getLocalizedMessage()); // TODO Удалить после отладки
-            savePage(page);
-
-            saveError(site, e.getLocalizedMessage());
-
-            return;
-//        } finally {
-            // В любом случае нужен перерыв между запросами
-//                randomTimeout();
-////                synchronized (site) {
-//                    try {
-//                        var interval = searchBot.getRequestsInterval();
-//                        int min = interval.getMin();
-//                        var time = min + random.nextInt(interval.getMax() - min + 1); // Интервал миллисекунд
-//                        Thread.sleep(time);
-//                    } catch (Exception e) {
-//                        e.printStackTrace(System.err);
-//                    }
-//                }
         }
-//        }
 
+        var site = page.getSite();
 
-        var html = document.html(); //.replaceAll("\r\n", "");
-
-//            var byteBuffer = StandardCharsets.UTF_8.encode(html);
-//            html = new String(byteBuffer.array(), StandardCharsets.UTF_8);
-
-        byte[] b = html.getBytes(StandardCharsets.UTF_8);
-        html = new String(b, StandardCharsets.UTF_8);
-
-        page.setCode(statusCode);
-        page.setContent(html);
-        savePage(page);
-
-        updateSite(site);
-
-        if (isCancelled()) {System.out.println("Остановлена"); return;}
+//        if (isCancelled()) {System.out.println("Остановлена"); return;}
 
 //        var taskList = new ArrayList<PageAnalyzer>();
 
         // URL начинается с переданного корня и не содержит ссылок на внутренние элементы страницы (не содержит #)
+        var document = Jsoup.parse(page.getContent());
         var regex = "(?i)^((" + site.getUrl() + ")|/)[^#]*$";
         var elements = document.select("a[href~=" + regex + "]");
 
@@ -255,7 +128,7 @@ public class PageAnalyzer extends RecursiveAction {
                     .distinct()
                     .toList();
 
-            if (isCancelled()) {System.out.println("Остановлена"); return;}
+//            if (isCancelled()) {System.out.println("Остановлена"); return;}
 
             newPages = paths.stream()
                     .filter(p -> !existingPaths.contains(p))
@@ -274,7 +147,7 @@ public class PageAnalyzer extends RecursiveAction {
 
         updateSite(site);
 
-        if (isCancelled()) {System.out.println("Остановлена"); return;}
+//        if (isCancelled()) {System.out.println("Остановлена"); return;}
 
 //        var pageNode = applicationContext.getBean(PageNode.class);
 //        pageNode.compute();
@@ -305,7 +178,7 @@ public class PageAnalyzer extends RecursiveAction {
 
 //        taskList.forEach(ForkJoinTask::join);
 
-        if (isCancelled()) {System.out.println("Остановлена"); return;}
+//        if (isCancelled()) {System.out.println("Остановлена"); return;}
 
         for (var task : taskList) {
             try {
@@ -324,9 +197,9 @@ public class PageAnalyzer extends RecursiveAction {
             }
         }
 
-        if (isCancelled()) {System.out.println("Остановлена"); return;}
+//        if (isCancelled()) {System.out.println("Остановлена"); return;}
 
-        if (page.isRoot()) {
+        if (page.isRoot() && site.getStatus() == IndexingStatus.INDEXING) {
             site.setStatus(IndexingStatus.INDEXED);
             saveSite(site);
         }
@@ -350,14 +223,23 @@ public class PageAnalyzer extends RecursiveAction {
             document = response.parse();
         } catch (HttpStatusException e) {
             // Ошибка не связана напрямую с программой - подробное описание анализировать не требуется
-            System.err.println(e.getLocalizedMessage());
+            System.out.println(e.getLocalizedMessage());
 
             statusCode = e.getStatusCode();
             page.setCode(statusCode);
             savePage(page);
 
-            saveError(site, e.getLocalizedMessage());
+            updateSite(site);
 
+            return;
+        } catch (UnsupportedMimeTypeException e) {
+            // По ссылке не страница, а, например, картинка. Не ошибка. Но такие страницы не нужны - удаляем их.
+            System.out.println(e.getLocalizedMessage());
+
+            page.setCode(415); // Unsupported Media Type («Неподдерживаемый тип данных»)
+            savePage(page);
+
+            updateSite(site);
             return;
         } catch (Exception e) {
             e.printStackTrace();
@@ -372,8 +254,8 @@ public class PageAnalyzer extends RecursiveAction {
         }
 
         var html = document.html();
-        byte[] b = html.getBytes(StandardCharsets.UTF_8);
-        html = new String(b, StandardCharsets.UTF_8);
+//        byte[] b = html.getBytes(StandardCharsets.UTF_8);
+//        html = new String(b, StandardCharsets.UTF_8);
 
         page.setCode(statusCode);
         page.setContent(html);
@@ -385,7 +267,7 @@ public class PageAnalyzer extends RecursiveAction {
         var lemmasFinder = applicationContext.getBean(LemmasFinder.class);
         var lemmas = lemmasFinder.findLemmasInHtml(html);
 
-        synchronized (page) {
+        synchronized (site) {
 
             var existingLemmas = lemmaRepository.findBySiteAndLemmaIn(site, lemmas.keySet());
             var lemmasCache = existingLemmas.stream()
@@ -500,8 +382,10 @@ public class PageAnalyzer extends RecursiveAction {
         }
     }
 
-    private synchronized void savePage(Page page) {
-        pageRepository.save(page);
+    private void savePage(Page page) {
+//        synchronized (page) {
+            pageRepository.save(page);
+//        }
     }
 
     private void updateSite(Site site) {
@@ -515,8 +399,10 @@ public class PageAnalyzer extends RecursiveAction {
         updateSite(site);
     }
 
-    private synchronized void saveSite(Site site) {
-        siteRepository.save(site);
+    private void saveSite(Site site) {
+//        synchronized (site) {
+            siteRepository.save(site);
+//        }
     }
 
 //    private synchronized PageAnalyzer forkTask(String path) {
@@ -569,23 +455,27 @@ public class PageAnalyzer extends RecursiveAction {
 ////        return task.fork();
 //    }
 
-    private synchronized void randomTimeout() {
-        try {
-            var interval = searchBot.getRequestsInterval();
-            int min = interval.getMin();
-            var time = min + random.nextInt(interval.getMax() - min + 1); // Интервал миллисекунд
-            Thread.sleep(time);
-        } catch (Exception e) {
-            e.printStackTrace(System.err);
+    private void randomTimeout() {
+        synchronized (page.getSite()) {
+            try {
+                var interval = searchBot.getRequestsInterval();
+                int min = interval.getMin();
+                var time = min + random.nextInt(interval.getMax() - min + 1); // Интервал миллисекунд
+                Thread.sleep(time);
+            } catch (Exception e) {
+                e.printStackTrace(System.err);
+            }
         }
     }
 
     @Transactional
     private void saveLemmatizationChanges(List<Lemma> deletingLemmas, List<Lemma> savingLemmas,
                                           List<Index> deletingIndexes, List<Index> savingIndexes){
-        indexRepository.deleteAll(deletingIndexes);
-        lemmaRepository.deleteAll(deletingLemmas);
-        lemmaRepository.saveAll(savingLemmas);
-        indexRepository.saveAll(savingIndexes);
+        synchronized (page) {
+            indexRepository.deleteAll(deletingIndexes);
+            lemmaRepository.deleteAll(deletingLemmas);
+            lemmaRepository.saveAll(savingLemmas);
+            indexRepository.saveAll(savingIndexes);
+        }
     }
 }

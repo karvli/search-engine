@@ -1,4 +1,4 @@
-package searchengine;
+package searchengine.services;
 
 import lombok.RequiredArgsConstructor;
 import org.apache.lucene.morphology.LuceneMorphology;
@@ -21,12 +21,6 @@ public class LemmasFinder {
 
     private final RussianLuceneMorphology russianMorphology;
     private final EnglishLuceneMorphology englishMorphology;
-
-//    public LemmasFinder() throws IOException {
-//        russianMorphology = new RussianLuceneMorphology();
-//        englishMorphology = new EnglishLuceneMorphology();
-//    }
-
 
     /**
      * Выполняет поиск русских и английских лемм, возвращает количество упоминаний каждой леммы в тексте
@@ -81,13 +75,13 @@ public class LemmasFinder {
      * @param text анализируемый текст
      * @return слова
      */
-    private String[] getWords(String text) {
+    private List<String> getWords(String text) {
         var words = text.strip().toLowerCase().split("\\s+");
 
         return Arrays.stream(words)
                 .map(this::clearUnnecessarySymbols)
                 .filter(this::isFittingWord)
-                .toArray(String[]::new);
+                .toList();
     }
 
     /**

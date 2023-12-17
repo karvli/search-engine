@@ -5,7 +5,6 @@ import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
-import org.hibernate.annotations.NaturalId;
 import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
 
@@ -59,4 +58,9 @@ public class Page {
     public boolean isRoot() {
         return path.strip().equals("/");
     }
+
+    public boolean canBeParsed() {
+        return !content.isBlank();
+    }
+
 }
