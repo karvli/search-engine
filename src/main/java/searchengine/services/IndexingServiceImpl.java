@@ -47,18 +47,6 @@ public class IndexingServiceImpl implements IndexingService {
                     .build();
         }
 
-
-//        var rootUrl = SiteMap.getNormalizedUrl("https://skillbox.ru/");
-//        var siteMap = new SiteMap(rootUrl);
-//
-//        // ФОРМИРОВАНИЕ КАРТЫ САЙТА
-//        var task = new SiteMapAnalyzer(siteMap.getRootNode());
-//
-//        var start = System.currentTimeMillis();
-//        try (var pool = new ForkJoinPool()) {
-//            pool.invoke(task);
-//        }
-
         siteRepository.deleteAll(currentSites);
 
         indexingPool = new ForkJoinPool();
@@ -66,18 +54,6 @@ public class IndexingServiceImpl implements IndexingService {
 //        indexingThreads = new ArrayList<>();
 
         var now = LocalDateTime.now();
-
-//        var indexingSites = sites.getSites().stream()
-//                .map(site -> {
-//                    var newSite = new searchengine.model.Site();
-//                    newSite.setName(site.getName());
-//                    newSite.setUrl(site.getUrl());
-//                    newSite.setStatus(IndexingStatus.INDEXING);
-//                    newSite.setStatusTime(now);
-//
-//                    return newSite;
-//                })
-//                .toList();
 
         var indexingSites = new ArrayList<searchengine.model.Site>();
         var rootPages = new ArrayList<Page>();
@@ -246,19 +222,23 @@ public class IndexingServiceImpl implements IndexingService {
             page = pageRepository.findBySiteAndPath(site, path);
         }
 
-        if (page == null) {
-            page = new Page();
-            page.setSite(site);
-            page.setPath(path);
-            page.setCode(102);
+        if (page != null) {
+            if (page.getCode() == 102) {
+                // Страница уже в очереди на обновление. Дальнейшее действия не требуются.
+                return IndexingResponse.builder()
+                        .result(true)
+                        .build();
+            }
 
-            pageRepository.save(page);
-        } else if (page.getCode() == 102) {
-            // Страница уже в очереди на обновление. Дальнейшее действия не требуются.
-            return IndexingResponse.builder()
-                    .result(true)
-                    .build();
+            pageRepository.delete(page); // Удаление Page, Lemma, Index в соответствии с ТЗ
         }
+
+        page = new Page();
+        page.setSite(site);
+        page.setPath(path);
+        page.setCode(102);
+
+        pageRepository.save(page);
 
         val finalSite = site;
         val finalPage = page;
