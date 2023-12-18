@@ -9,15 +9,14 @@ import searchengine.config.Site;
 import searchengine.config.SitesList;
 import searchengine.dto.indexing.IndexingResponse;
 import searchengine.dto.indexing.PageAnalyzer;
-import searchengine.model.IndexingStatus;
-import searchengine.model.Page;
-import searchengine.model.PageRepository;
-import searchengine.model.SiteRepository;
+import searchengine.model.*;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ForkJoinPool;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -26,6 +25,8 @@ public class IndexingServiceImpl implements IndexingService {
     private final SitesList sites;
     private final SiteRepository siteRepository;
     private final PageRepository pageRepository;
+    private final LemmaRepository lemmaRepository;
+    private final IndexRepository indexRepository;
     private final ApplicationContext applicationContext;
 
     public static ForkJoinPool indexingPool;
@@ -86,7 +87,6 @@ public class IndexingServiceImpl implements IndexingService {
 
         new Thread(() -> {
             siteRepository.deleteAll(currentSites);
-
             siteRepository.saveAll(indexingSites);
             pageRepository.saveAll(rootPages);
 
@@ -230,17 +230,26 @@ public class IndexingServiceImpl implements IndexingService {
         path = PageAnalyzer.getNormalizedPath(site, path);
 
         Page page = null;
+        Thread deletingThread = null;
+
         if (!newSite) {
             page = pageRepository.findBySiteAndPath(site, path);
         }
 
         var newPage = page == null;
 
-        if (!newPage && page.getCode() == 102) {
-            // Страница уже в очереди на обновление. Дальнейшее действия не требуются.
-            return IndexingResponse.builder()
-                    .result(true)
-                    .build();
+        if (!newPage)  {
+
+            if (page.getCode() == 102) {
+                // Страница уже в очереди на обновление. Дальнейшее действия не требуются.
+                return IndexingResponse.builder()
+                        .result(true)
+                        .build();
+            }
+
+            val finalPage = page;
+            deletingThread = new Thread(() -> deleteLeLemmatizationInfo(finalPage));
+            deletingThread.start();
         }
 
         page = new Page();
@@ -252,10 +261,16 @@ public class IndexingServiceImpl implements IndexingService {
 
         val finalSite = site;
         val finalPage = page;
+        val finalDeletingThread = deletingThread;
 
         new Thread(() -> {
-            if (!newPage) {
-                deleteLeLemmatizationInfo(finalPage);
+
+            if (finalDeletingThread != null) {
+                try {
+                    finalDeletingThread.join();
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
             }
 
             var pageAnalyzer = applicationContext.getBean(PageAnalyzer.class);
@@ -277,11 +292,25 @@ public class IndexingServiceImpl implements IndexingService {
     // Удаление Page, Lemma, Index в соответствии с ТЗ
     @Transactional
     private void deleteLeLemmatizationInfo(Page page) {
-//        synchronized (page) {
-//            synchronized (page.getSite()) {
-                pageRepository.delete(page);
-//            }
-//        }
+        // Можно было бы синхронизировать по Page, но в случае возникновении ошибки записи Page нет гарантии, что
+        // в репозитории ещё не изменилась информация по Lemma.
+        synchronized (page.getSite()) {
+            var checkingLemmas = indexRepository.findByPage(page).stream()
+                    .map(Index::getLemma)
+                    .collect(Collectors.groupingBy(lemma -> lemma.getFrequency() > 1));
+
+            var deletingLemmas = checkingLemmas.getOrDefault(false, Collections.emptyList());
+
+            var changedLemmas = checkingLemmas.getOrDefault(true, Collections.emptyList());
+            for (var lemma : changedLemmas) {
+                var frequency = lemma.getFrequency() - 1;
+                lemma.setFrequency(frequency);
+            }
+
+            lemmaRepository.deleteAll(deletingLemmas);
+            lemmaRepository.saveAll(changedLemmas);
+            pageRepository.delete(page);
+        }
     }
 
 }
