@@ -97,6 +97,7 @@ public class PageAnalyzer extends RecursiveAction {
         var site = page.getSite();
 
 //        if (isCancelled()) {System.out.println("Остановлена"); return;}
+        if (site.indexingFailed()) {System.out.println("Остановлена"); return;}
 
 //        var taskList = new ArrayList<PageAnalyzer>();
 
@@ -121,6 +122,8 @@ public class PageAnalyzer extends RecursiveAction {
 
         List<Page> newPages;
 
+        if (site.indexingFailed()) {System.out.println("Остановлена"); return;}
+
         synchronized (site) {
             var existingPaths = pageRepository.findBySiteAndPathIn(site, paths).stream()
                     .map(Page::getPath)
@@ -141,6 +144,8 @@ public class PageAnalyzer extends RecursiveAction {
                         return newPage;
                     })
                     .toList();
+
+            if (site.indexingFailed()) {System.out.println("Остановлена"); return;}
 
             pageRepository.saveAll(newPages);
         }
@@ -179,6 +184,7 @@ public class PageAnalyzer extends RecursiveAction {
 //        taskList.forEach(ForkJoinTask::join);
 
 //        if (isCancelled()) {System.out.println("Остановлена"); return;}
+        if (site.indexingFailed()) {System.out.println("Остановлена"); return;}
 
         for (var task : taskList) {
             try {
@@ -193,7 +199,7 @@ public class PageAnalyzer extends RecursiveAction {
                 page.setContent("taskList: " + e.getLocalizedMessage()); // TODO Удалить после отладки
                 savePage(page);
 
-                saveError(site, e.getLocalizedMessage());
+                saveError(site, e);
             }
         }
 
@@ -248,15 +254,21 @@ public class PageAnalyzer extends RecursiveAction {
             page.setContent("jsoup: " + e.getLocalizedMessage()); // TODO Удалить после отладки
             savePage(page);
 
-            saveError(site, e.getLocalizedMessage());
+            saveError(site, e);
 
             return;
         }
 
+
         var html = document.html();
-//        byte[] b = html.getBytes(StandardCharsets.UTF_8);
+//        byte[] b = html.getBytes(document.charset());
 //        html = new String(b, StandardCharsets.UTF_8);
 
+        /* При сохранении может возникнуть ошибка:
+        SQL Error: 1366, SQLState: HY000
+        Incorrect string value: '\xF0\x9F\x98\x83',...' for column 'content' at row 1
+        Это связано с недостаточной битностью кодировки в базе данных. Для исправления надо поменять кодировку БД.
+        Для MySQL в случае UTF-8 нужно использовать utf8mb4 */
         page.setCode(statusCode);
         page.setContent(html);
         savePage(page);
@@ -376,33 +388,57 @@ public class PageAnalyzer extends RecursiveAction {
                 saveLemmatizationChanges(deletingLemmas, changedLemmas, deletingIndexes, changedIndexes);
             } catch (Exception e) {
                 e.printStackTrace();
-                saveError(site, e.getLocalizedMessage());
+                saveError(site, e);
             }
 
         }
     }
 
     private void savePage(Page page) {
-//        synchronized (page) {
-            pageRepository.save(page);
-//        }
+        synchronized (page) {
+            try {
+                pageRepository.save(page);
+            } catch (Exception e) {
+                saveError(page.getSite(), e);
+                throw e;
+            }
+        }
     }
 
     private void updateSite(Site site) {
-        site.setStatusTime(LocalDateTime.now());
-        saveSite(site);
+//        synchronized (site) {
+//            site = siteRepository.findById(site.getId()).get();
+//            if (site.indexingFailed()) {
+//                return;
+//            }
+
+            site.setStatusTime(LocalDateTime.now());
+            saveSite(site);
+//        }
     }
 
     private void saveError(Site site, String error) {
         site.setLastError(error);
         site.setStatus(IndexingStatus.FAILED);
         updateSite(site);
+//        site.setStatusTime(LocalDateTime.now());
+//        saveSite(site);
+    }
+
+    private void saveError(Site site, Exception error) {
+        saveError(site,  error.getLocalizedMessage());
     }
 
     private void saveSite(Site site) {
-//        synchronized (site) {
-            siteRepository.save(site);
-//        }
+        synchronized (site) {
+            try {
+                siteRepository.save(site);
+            } catch (Exception e) {
+                saveError(page.getSite(), e);
+                throw e;
+            }
+
+        }
     }
 
 //    private synchronized PageAnalyzer forkTask(String path) {

@@ -176,9 +176,13 @@ public class IndexingServiceImpl implements IndexingService {
                 indexingSite.setStatus(IndexingStatus.FAILED);
                 indexingSite.setLastError("Индексация остановлена пользователем");
                 indexingSite.setStatusTime(now);
+
+                synchronized (indexingSite) {
+                    siteRepository.save(indexingSite);
+                }
             }
 
-            siteRepository.saveAll(indexingSites);
+//            siteRepository.saveAll(indexingSites);
         }).start();
 
         return IndexingResponse.builder()

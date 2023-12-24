@@ -3,7 +3,6 @@ package searchengine.services;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.util.Streamable;
 import org.springframework.stereotype.Service;
-import searchengine.config.SitesList;
 import searchengine.dto.statistics.DetailedStatisticsItem;
 import searchengine.dto.statistics.StatisticsData;
 import searchengine.dto.statistics.StatisticsResponse;
@@ -13,15 +12,11 @@ import searchengine.model.*;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Random;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class StatisticsServiceImpl implements StatisticsService {
-
-    private final Random random = new Random();
-    private final SitesList sites;
 
     private final SiteRepository siteRepository;
     private final PageRepository pageRepository;
@@ -59,12 +54,7 @@ public class StatisticsServiceImpl implements StatisticsService {
             item.setLemmas(lemmasCount);
             item.setStatus(site.getStatus());
             item.setError(site.getLastError());
-//            item.setStatusTime(site.getStatusTime());
-
-            // TODO Найти вариант проще. Возможно, аннотацией поля @JsonFormat
-            var zoneDateTime = site.getStatusTime().atZone(ZoneOffset.systemDefault());
-            var millis = zoneDateTime.toInstant().toEpochMilli();
-            item.setStatusTime(millis);
+            item.setStatusTime(getStatusTimeMillis(site));
 
             detailed.add(item);
         }
@@ -76,5 +66,10 @@ public class StatisticsServiceImpl implements StatisticsService {
         response.setStatistics(data);
         response.setResult(true);
         return response;
+    }
+
+    private long getStatusTimeMillis(Site site) {
+        var zoneDateTime = site.getStatusTime().atZone(ZoneOffset.systemDefault());
+        return zoneDateTime.toInstant().toEpochMilli();
     }
 }
