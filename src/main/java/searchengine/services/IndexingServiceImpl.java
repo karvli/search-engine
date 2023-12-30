@@ -38,9 +38,9 @@ public class IndexingServiceImpl implements IndexingService {
     public synchronized IndexingResponse startIndexing() {
 
         var siteSettings = sites.getSites();
-        var names = siteSettings.stream().map(Site::getName).toList();
+        var urls = siteSettings.stream().map(Site::getUrl).toList();
 
-        var currentSites = siteRepository.findByNameIn(names);
+        var currentSites = siteRepository.findByUrlIn(urls);
 
         if (currentSites.stream().anyMatch(site -> site.getStatus() == IndexingStatus.INDEXING)) {
             return IndexingResponse.builder()
@@ -134,11 +134,8 @@ public class IndexingServiceImpl implements IndexingService {
 
     @Override
     public synchronized IndexingResponse stopIndexing() {
-
-//        var indexingSites = siteRepository.findByStatus(IndexingStatus.INDEXING);
-
-        var names = sites.getSites().stream().map(Site::getName).toList();
-        var indexingSites = siteRepository.findByStatusAndNameIn(IndexingStatus.INDEXING, names);
+        var urls = sites.getSites().stream().map(Site::getUrl).toList();
+        var indexingSites = siteRepository.findByStatusAndUrlIn(IndexingStatus.INDEXING, urls);
 
         if (indexingSites.isEmpty()) {
             return IndexingResponse.builder()
@@ -217,7 +214,7 @@ public class IndexingServiceImpl implements IndexingService {
                     .build();
         }
 
-        var site = siteRepository.findByName(configSite.getName());
+        var site = siteRepository.findByUrl(configSite.getUrl());
         var newSite = site == null;
         if (newSite) {
             site = new searchengine.model.Site();

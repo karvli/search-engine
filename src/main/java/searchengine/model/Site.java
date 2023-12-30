@@ -29,12 +29,12 @@ public class Site {
     @Column(name = "last_error", columnDefinition = "TEXT")
     private String lastError;
 
-    @Column(columnDefinition = "VARCHAR(255)", nullable = false)
+    @Column(columnDefinition = "VARCHAR(255)", nullable = false, unique = true)
     @NonNull
     private String url;
 
-    // Имя уникально, т.к. индексировать один и тот же сайт более 2 раз нет смысла. Также это ускоряет удаление.
-    @Column(columnDefinition = "VARCHAR(255)", nullable = false, unique = true)
+    // Имя уникально, т.к. индексировать один и тот же сайт более одного раза нет смысла. Также это ускоряет удаление.
+    @Column(columnDefinition = "VARCHAR(255)", nullable = false)
     @NonNull
     private String name;
 

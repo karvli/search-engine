@@ -41,13 +41,15 @@ public class LemmasFinder {
                 morphology = englishMorphology;
             }
 
-            // Некоторые слова могу иметь несколько нормальных форм.
+            // Некоторые слова могут иметь несколько нормальных форм.
             // Например, у test, tested одна форма - test, а у testing их две - testing и test (именно в таком порядке).
+            // Для поискового запроса достаточно одного варианта. Выбирается первый найденный - самый приоритетный.
             var normalForms = morphology.getNormalForms(word);
-            for (var normalWord : normalForms) {
-                var count = lemmas.getOrDefault(normalWord, 0) + 1;
-                lemmas.put(normalWord, count);
-            }
+//            for (var normalWord : normalForms) {
+            var normalWord = normalForms.get(0);
+            var count = lemmas.getOrDefault(normalWord, 0) + 1;
+            lemmas.put(normalWord, count);
+//            }
         }
 
         return lemmas;

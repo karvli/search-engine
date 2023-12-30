@@ -9,5 +9,6 @@ import java.util.List;
 public interface LemmaRepository extends CrudRepository<Lemma, Integer> {
     List<Lemma> findBySiteIn(Iterable<Site> site);
     List<Lemma> findBySiteAndLemmaIn(Site site, Iterable<String> lemma);
+    List<Lemma> findBySiteInAndLemmaIn(Iterable<Site> site, Iterable<String> lemma);
 
 }

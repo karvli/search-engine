@@ -1,28 +1,24 @@
 package searchengine.controllers;
 
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import searchengine.dto.indexing.IndexPageRequest;
 import searchengine.dto.indexing.IndexingResponse;
+import searchengine.dto.search.SearchResponse;
 import searchengine.dto.statistics.StatisticsResponse;
 import searchengine.services.IndexingService;
+import searchengine.services.SearchService;
 import searchengine.services.StatisticsService;
 
-import java.util.HashMap;
-
+@RequiredArgsConstructor
 @RestController
 @RequestMapping("/api")
 public class ApiController {
 
     private final StatisticsService statisticsService;
     private final IndexingService indexingService;
-
-    public ApiController(StatisticsService statisticsService, IndexingService indexingService) {
-        this.statisticsService = statisticsService;
-        this.indexingService = indexingService;
-    }
+    private final SearchService searchService;
 
     @GetMapping("/statistics")
     public ResponseEntity<StatisticsResponse> statistics() {
@@ -52,5 +48,29 @@ public class ApiController {
 //        }
 
         return ResponseEntity.ok(indexingService.indexPage(url));
+    }
+
+    @GetMapping("/search")
+    public ResponseEntity<SearchResponse> search(String query,
+                                                 @RequestParam(required = false) String site,
+                                                 @RequestParam(required = false) Integer offset,
+                                                 @RequestParam(required = false) Integer limit) {
+        SearchResponse response;
+
+        if (offset == null) {
+            offset = 0;
+        }
+        if (limit == null) {
+            limit = 20;
+        }
+
+        var allSites = site == null || site.isBlank();
+        if (allSites) {
+            response = searchService.searchAllSites(query, limit, offset);
+        } else {
+            response = searchService.searchSite(site, query, limit, offset);
+        }
+
+        return ResponseEntity.ok(response);
     }
 }
