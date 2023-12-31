@@ -115,7 +115,10 @@ public class SearchServiceImpl implements SearchService {
 
         var absoluteRelevance = computeAbsoluteRelevance(lemmas);
         var relativeRelevance = computeRelativeRelevance(absoluteRelevance);
-        var data = getSearchData(relativeRelevance, limit, offset);
+
+        var lemmasFinder = applicationContext.getBean(LemmasFinder.class);
+        var lemmasNames = lemmasFinder.findLemmas(query).keySet();
+        var data = getSearchData(relativeRelevance, limit, offset, lemmasNames);
 
         return SearchResponse.builder()
                 .result(true)
@@ -210,8 +213,9 @@ public class SearchServiceImpl implements SearchService {
                         entry -> entry.getValue() / maxRelevance));
     }
 
-    private List<SearchData> getSearchData(@NonNull Map<Page, Float> relevance, int limit, int offset) {
-        if (relevance.isEmpty() || offset > (relevance.size() - 1)) {
+    private List<SearchData> getSearchData(@NonNull Map<Page, Float> relevance, int limit, int offset,
+                                           @NonNull Set<String> lemmas) {
+        if (relevance.isEmpty() || offset > (relevance.size() - 1) || lemmas.isEmpty() || limit <= 0 || offset < 0) {
             return Collections.emptyList();
         }
 
@@ -220,6 +224,7 @@ public class SearchServiceImpl implements SearchService {
                 .toList();
 
         List<SearchData> data = new ArrayList<>(limit);
+        var lemmasFinder = applicationContext.getBean(LemmasFinder.class);
 
         var maxIndex = Math.min(offset + limit, relevance.size());
         for (int i = offset; i < maxIndex; i++) {
@@ -228,9 +233,11 @@ public class SearchServiceImpl implements SearchService {
             var site = page.getSite();
 
             var title = "";
+            var snippet = "";
             if (page.canBeParsed()) {
                 var document = Jsoup.parse(page.getContent());
                 title = document.title();
+                snippet = lemmasFinder.getSnippet(document.text(), lemmas);
             }
 
             var searchData = new SearchData();
@@ -238,7 +245,7 @@ public class SearchServiceImpl implements SearchService {
             searchData.setSiteName(site.getName());
             searchData.setUri(page.getPath());
             searchData.setTitle(title);
-            searchData.setSnippet("");
+            searchData.setSnippet(snippet);
             searchData.setRelevance(entry.getValue());
 
             data.add(searchData);
@@ -246,4 +253,5 @@ public class SearchServiceImpl implements SearchService {
 
         return data;
     }
+
 }
