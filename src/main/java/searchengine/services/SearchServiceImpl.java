@@ -162,8 +162,6 @@ public class SearchServiceImpl implements SearchService {
             relevance.putAll(tmpRelevance);
         }
 
-//        pages.sort();
-
         return relevance;
     }
 

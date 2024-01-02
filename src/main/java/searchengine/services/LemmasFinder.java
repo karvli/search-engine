@@ -15,8 +15,7 @@ import java.util.regex.Pattern;
 @Component
 public class LemmasFinder {
 
-    private static final List<String> PARTICLES = Arrays.asList("МЕЖД", "СОЮЗ", "ПРЕДЛ", "ЧАСТ",
-            "PREP", "VBE");
+    private static final List<String> PARTICLES = Arrays.asList("МЕЖД", "СОЮЗ", "ПРЕДЛ", "ЧАСТ", "PREP", "VBE");
 
     private final RussianLuceneMorphology russianMorphology;
     private final EnglishLuceneMorphology englishMorphology;
@@ -63,85 +62,106 @@ public class LemmasFinder {
 
     /**
      * Выполняет поиск лемм, формирует сниппет результата поиска. Текст должен быть заранее очищено от html-тегов.
+     *
      * @param lemmas искомые леммы
-     * @param text текст, очищенный от html-тегов
+     * @param text   текст, очищенный от html-тегов
      * @return сниппет
      */
     public String getSnippet(@NonNull String text, @NonNull Set<String> lemmas) {
-        var textLowerCase = text.toLowerCase(); // Для поиска без учёта регистра
-        var words = getWords(textLowerCase);
+        // Стандартизация разделителей для удобного отображения. Убираем ненужные переносы строк и т.п.
+        var words = List.of(text.split("\\s+"));
+        var wordsIndexes = new ArrayList<Integer>(); // Индексы значимых слов
 
         var snippet = new StringBuilder();
         var rangeSize = 2; // Количество значимых слов слева и справа от леммы
-        var lastIndex = 0; // Последний проверенный символ текста
-        var lastLemmaIndex = -1;
-        var lastWordIndex = -1;
-        var spoilerAdded = false; // Если слишком много совпадений
+//        var lastIndex = 0; // Последний проверенный символ текста
+        var lastLemmaIndex = -1; // Последняя добавленное слово леммы (для определения границ слов)
+        var lastWordIndex = -1; // Последнее добавленное слово (не только леммы)
+        var spoilerAdded = false; // Сокрытие части сниппета, если слишком много совпадений
 
         for (var i = 0; i < words.size(); i++) {
             var word = words.get(i);
-            var normalWord = getNormalWord(word);
+            var searchWord = clearUnnecessarySymbols(word);
 
-            if (lemmas.contains(normalWord)) {
+            if (searchWord.isBlank() || !isFittingWord(searchWord)) {
+                continue;
+            }
 
-                if (i > 0 && lastLemmaIndex == -1) {
-                    snippet.append("... ");
+            var wordIndex = wordsIndexes.size(); // Для последующего поиска значимых слов
+            wordsIndexes.add(i);
+
+            var normalWord = getNormalWord(searchWord); // Нормальная форма всегда в нижнем регистре
+            if (!lemmas.contains(normalWord)) {
+
+                // Слово, не являющееся искомой леммой
+
+                if (lastLemmaIndex == -1) {
+                    continue;
                 }
 
-                if (snippet.length() > 270 && !spoilerAdded) {
-                    snippet.append("<details>");
-                    spoilerAdded = true;
+                var endWordIndex = lastLemmaIndex + rangeSize; // Текст "до" текущего слова
+                if (wordIndex <= endWordIndex) {
+                    // Подсказка (уточнение) после слова леммы
+                    int startIndex = wordsIndexes.get(lastLemmaIndex);
+                    startIndex = Math.max(startIndex, lastWordIndex) + 1; // После последнего добавленного
+                    for (int j = startIndex; j <= i; j++) {
+                        snippet.append(' ').append(words.get(j));
+                    }
+
+                    lastWordIndex = i;
+                } else if (wordIndex == (endWordIndex + 1)) {
+                    // Многоточие после окончание отрывка текста
+                    snippet.append(" ...");
                 }
-
-                var startWordIndex = textLowerCase.indexOf(word, lastIndex);
-
-                var previousIndex = Math.max(lastWordIndex, i - rangeSize);
-                if (previousIndex != -1 && previousIndex < i - 1) {
-                    var previousWord = words.get(previousIndex);
-                    var start = textLowerCase.lastIndexOf(previousWord, startWordIndex);
-                    var previousText = text.substring(start, startWordIndex);
-                    snippet.append(previousText);
-                }
-
-                snippet.append("<b>");
-                lastIndex = startWordIndex + word.length();
-                var wordText = text.substring(startWordIndex, lastIndex);
-                snippet.append(wordText);
-                snippet.append("</b>");
-
-                lastWordIndex = i;
-                lastLemmaIndex = i;
 
                 continue;
             }
 
-            if (lastLemmaIndex == -1) {
-                continue;
+            // Новое слово леммы
+
+            if (snippet.length() > 270 && !spoilerAdded) {
+                snippet.append("<details>");
+                spoilerAdded = true;
             }
 
-            var endWordIndex = lastLemmaIndex + rangeSize; // Текст "до" текущего слова
-            if (i <= endWordIndex) {
-                // Добавление подсказки после леммы
-                if (i == words.size() - 1) {
-                    var addingText = text.substring(lastIndex);
-                    snippet.append(addingText);
-                    break;
+            if (i > 0) {
+                if (lastLemmaIndex == -1) {
+                    snippet.append("...");
                 }
 
-                var nextWord = words.get(i + 1);
-                var end = textLowerCase.indexOf(nextWord, lastIndex);
-                var addingText = text.substring(lastIndex, end);
-                snippet.append(addingText);
-
-                lastIndex = end;
-                lastWordIndex = i;
-            } else if (i == (endWordIndex + 1)) {
-                var lastSymbol = snippet.substring(snippet.length() - 1);
-                if (!Objects.equals(lastSymbol, " ")) {
-                    snippet.append(" ");
+                if (lastWordIndex < i - 1) {
+                    // Проверка и дополнение подсказки до слова леммы
+                    int previousIndex = wordsIndexes.get(Math.max(wordIndex - rangeSize, 0));
+                    if (lastWordIndex >= 0) {
+                        previousIndex = Math.max(lastWordIndex + 1, previousIndex);
+                    }
+                    for (int j = previousIndex; j < i; j++) {
+                        snippet.append(' ').append(words.get(j));
+                    }
                 }
-                snippet.append("... ");
             }
+
+            snippet.append(' ');
+
+            var endPrefixIndex = word.indexOf(searchWord);
+            if (endPrefixIndex > 0) {
+                snippet.append(word, 0, endPrefixIndex);
+            }
+
+            snippet.append("<b>").append(searchWord).append("</b>");
+
+            var startPostfixIndex = endPrefixIndex + searchWord.length();
+            if (startPostfixIndex < word.length()) {
+                snippet.append(word, startPostfixIndex, word.length());
+            }
+
+            lastWordIndex = i;
+            lastLemmaIndex = wordIndex;
+        }
+
+        if (lastWordIndex != words.size() - 1 && !snippet.substring(snippet.length() - 3).equals("...")) {
+            // Частный случай: после последнего слова леммы в строке недостаточно значимых слов
+            snippet.append(" ...");
         }
 
         if (spoilerAdded) {
@@ -174,7 +194,13 @@ public class LemmasFinder {
      */
     private String clearUnnecessarySymbols(String word) {
         // В русском языке могут использоваться дефисы. Например, в причастиях "кто-то", "что-то", "какой-то".
-        var wordRegex = "^[^а-яёa-z]*(?<word>([а-яёa-z]+)|([а-яё]+[а-яё\\-]*[а-яё]+))[^а-яёa-z]*$";
+        // Пример для строчных букв: "^[^а-яёa-z]*(?<word>([а-яёa-z]+)|([а-яё]+[а-яё\\-]*[а-яё]+))[^а-яёa-z]*$"
+        var russianWordPattern = "а-яёА-ЯЁ";
+        var wordPattern = russianWordPattern.concat("a-zA-Z");
+        var wordRegex = "^[^".concat(wordPattern).concat("\\d]*(?<word>([").concat(wordPattern)
+                .concat("]+)|([").concat(russianWordPattern).concat("]+[").concat(russianWordPattern)
+                .concat("\\-]*[").concat(russianWordPattern).concat("]+))[^")
+                .concat(wordPattern).concat("\\d]*$");
         var matcher = Pattern.compile(wordRegex).matcher(word);
         if (matcher.find()) {
             word = matcher.group("word");
@@ -195,17 +221,14 @@ public class LemmasFinder {
             return false;
         }
 
+        word = word.toLowerCase(); // Библиотека работает только со словами в нижнем регистре
+
         var morphology = qualifyMorphology(word);
         if (morphology == null) {
             return false;
         }
 
-        return morphology.getMorphInfo(word).stream()
-                .filter(s -> !s.isBlank())
-                .map(String::toUpperCase)
-                .map(s -> s.split("\\s+"))
-                .flatMap(Arrays::stream)
-                .noneMatch(PARTICLES::contains);
+        return morphology.getMorphInfo(word).stream().filter(s -> !s.isBlank()).map(String::toUpperCase).map(s -> s.split("\\s+")).flatMap(Arrays::stream).noneMatch(PARTICLES::contains);
     }
 
     /**
@@ -218,6 +241,12 @@ public class LemmasFinder {
      * @return нормальная форма слова
      */
     private String getNormalWord(String word) {
+        if (word.isBlank()) {
+            return "";
+        }
+
+        word = word.toLowerCase();
+
         var morphology = qualifyMorphology(word);
         if (morphology == null) {
             return "";
@@ -237,7 +266,7 @@ public class LemmasFinder {
     private LuceneMorphology qualifyMorphology(String word) {
         if (russianMorphology.checkString(word)) {
             return russianMorphology;
-        } else if(englishMorphology.checkString(word)) {
+        } else if (englishMorphology.checkString(word)) {
             return englishMorphology;
         }
 
