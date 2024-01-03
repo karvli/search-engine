@@ -23,14 +23,17 @@ indexing-settings:
 #      name: Лента.ру
     - url: https://www.skillbox.ru
       name: Skillbox
-#    - url: https://www.playback.ru
-#      name: PlayBack.Ru
+    - url: https://www.playback.ru
+      name: PlayBack.Ru
 
-
-# Настройки приложения
+# Настройки бота, выполняющего индексацию
 search-bot-settings:
   user-agent: Mozilla/5.0 (Windows; U; WindowsNT 5.1; en-US; rv1.8.1.6) Gecko/20070725 Firefox/2.0.0.6
   referer: http://www.google.com
   requests-interval:
     min: 500
     max: 1000
+
+# Настройки поиска результатов (для поисковых запросов)
+search-settings:
+  words-range: 2 # Сколько значимых слов нужно выводить слева и справа от поискового слова
