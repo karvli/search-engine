@@ -7,6 +7,7 @@ import org.apache.lucene.morphology.english.EnglishLuceneMorphology;
 import org.apache.lucene.morphology.russian.RussianLuceneMorphology;
 import org.jsoup.Jsoup;
 import org.springframework.stereotype.Component;
+import searchengine.config.SearchSettings;
 
 import java.util.*;
 import java.util.regex.Pattern;
@@ -17,6 +18,7 @@ public class LemmasFinder {
 
     private static final List<String> PARTICLES = Arrays.asList("МЕЖД", "СОЮЗ", "ПРЕДЛ", "ЧАСТ", "PREP", "VBE");
 
+    private final SearchSettings searchSettings;
     private final RussianLuceneMorphology russianMorphology;
     private final EnglishLuceneMorphology englishMorphology;
 
@@ -68,19 +70,51 @@ public class LemmasFinder {
      * @return сниппет
      */
     public String getSnippet(@NonNull String text, @NonNull Set<String> lemmas) {
-        // Стандартизация разделителей для удобного отображения. Убираем ненужные переносы строк и т.п.
-        var words = List.of(text.split("\\s+"));
-        var wordsIndexes = new ArrayList<Integer>(); // Индексы значимых слов
+        if (text.isBlank()) {
+            return "";
+        }
 
         var snippet = new StringBuilder();
-        var rangeSize = 2; // Количество значимых слов слева и справа от леммы
-//        var lastIndex = 0; // Последний проверенный символ текста
-        var lastLemmaIndex = -1; // Последняя добавленное слово леммы (для определения границ слов)
-        var lastWordIndex = -1; // Последнее добавленное слово (не только леммы)
+
+        // Разделение на строки, чтобы убрать из пояснений слова соседних абзацев
+        var lines = text.split("[\\r\\n]+");
         var spoilerAdded = false; // Сокрытие части сниппета, если слишком много совпадений
 
-        for (var i = 0; i < words.size(); i++) {
-            var word = words.get(i);
+        for (var line : lines) {
+            if (line.isBlank()) {
+                continue;
+            }
+
+            spoilerAdded = addLineToSnippet(line.strip(), lemmas, snippet, spoilerAdded);
+        }
+
+        if (spoilerAdded) {
+            snippet.append("</details>");
+        }
+
+        return snippet.toString().strip();
+    }
+
+    /**
+     * Разбирает переданную строку и добавляет результат в StringBuilder сниппета
+     *
+     * @param line анализируемая строка
+     * @param lemmas искомые леммы
+     * @param snippet формируемые сниппет
+     * @param spoilerAdded был ли уже добавлен тег спойлера
+     * @return добавлен ли тег спойлера (частично повторяет spoilerAdded)
+     */
+    private boolean addLineToSnippet(String line, Set<String> lemmas, StringBuilder snippet, boolean spoilerAdded) {
+        var words = line.split("[\u00a0\\s]+");
+        var wordsIndexes = new ArrayList<Integer>(); // Индексы значимых слов
+
+        var wordsRange = searchSettings.getWordsRange(); // Количество значимых слов слева и справа от леммы
+
+        var lastLemmaIndex = -1; // Последняя добавленное слово леммы (для определения границ слов)
+        var lastWordIndex = -1; // Последнее добавленное слово (не только леммы)
+
+        for (var i = 0; i < words.length; i++) {
+            var word = words[i];
             var searchWord = clearUnnecessarySymbols(word);
 
             if (searchWord.isBlank() || !isFittingWord(searchWord)) {
@@ -99,13 +133,13 @@ public class LemmasFinder {
                     continue;
                 }
 
-                var endWordIndex = lastLemmaIndex + rangeSize; // Текст "до" текущего слова
+                var endWordIndex = lastLemmaIndex + wordsRange; // Текст "до" текущего слова
                 if (wordIndex <= endWordIndex) {
                     // Подсказка (уточнение) после слова леммы
                     int startIndex = wordsIndexes.get(lastLemmaIndex);
                     startIndex = Math.max(startIndex, lastWordIndex) + 1; // После последнего добавленного
                     for (int j = startIndex; j <= i; j++) {
-                        snippet.append(' ').append(words.get(j));
+                        snippet.append(' ').append(words[j]);
                     }
 
                     lastWordIndex = i;
@@ -124,19 +158,26 @@ public class LemmasFinder {
                 spoilerAdded = true;
             }
 
+            var snippetLength = snippet.length(); // Нет смысла смотреть строки короче "<b></b>"
+            var checkB = snippetLength >= 7 && lastLemmaIndex >= 0;
+
             if (i > 0) {
-                if (lastLemmaIndex == -1) {
+                if (lastLemmaIndex == -1
+                        // Многоточие могло быть уже добавлена на предыдущей строке
+                        && !(snippetLength >= 3 && snippet.substring(snippetLength - 3).equals("..."))) {
                     snippet.append("...");
                 }
 
                 if (lastWordIndex < i - 1) {
+                    checkB = false;
+
                     // Проверка и дополнение подсказки до слова леммы
-                    int previousIndex = wordsIndexes.get(Math.max(wordIndex - rangeSize, 0));
+                    int previousIndex = wordsIndexes.get(Math.max(wordIndex - wordsRange, 0));
                     if (lastWordIndex >= 0) {
                         previousIndex = Math.max(lastWordIndex + 1, previousIndex);
                     }
                     for (int j = previousIndex; j < i; j++) {
-                        snippet.append(' ').append(words.get(j));
+                        snippet.append(' ').append(words[j]);
                     }
                 }
             }
@@ -146,9 +187,19 @@ public class LemmasFinder {
             var endPrefixIndex = word.indexOf(searchWord);
             if (endPrefixIndex > 0) {
                 snippet.append(word, 0, endPrefixIndex);
+                checkB = false;
             }
 
-            snippet.append("<b>").append(searchWord).append("</b>");
+
+            if (checkB && wordsIndexes.get(lastLemmaIndex) == i - 1) {
+                // Продолжение блока <b>: надо удалить ранее добавленный закрывающий тег, но оставить пробел после него
+                snippet.replace(snippetLength - 4, snippetLength, "");
+            } else {
+                // Новый блок <b>
+                snippet.append("<b>");
+            }
+
+            snippet.append(searchWord).append("</b>");
 
             var startPostfixIndex = endPrefixIndex + searchWord.length();
             if (startPostfixIndex < word.length()) {
@@ -159,16 +210,13 @@ public class LemmasFinder {
             lastLemmaIndex = wordIndex;
         }
 
-        if (lastWordIndex != words.size() - 1 && !snippet.substring(snippet.length() - 3).equals("...")) {
+        var startIndex = snippet.length() - 3;
+        if (lastWordIndex != words.length - 1 && startIndex >= 0 && !snippet.substring(startIndex).equals("...")) {
             // Частный случай: после последнего слова леммы в строке недостаточно значимых слов
             snippet.append(" ...");
         }
 
-        if (spoilerAdded) {
-            snippet.append("</details>");
-        }
-
-        return snippet.toString().strip();
+        return spoilerAdded;
     }
 
     /**

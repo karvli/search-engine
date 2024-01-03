@@ -235,7 +235,8 @@ public class SearchServiceImpl implements SearchService {
             if (page.canBeParsed()) {
                 var document = Jsoup.parse(page.getContent());
                 title = document.title();
-                snippet = lemmasFinder.getSnippet(document.text(), lemmas);
+                // Текст с переносами строк для более точного определения границ пояснений
+                snippet = lemmasFinder.getSnippet(document.wholeText(), lemmas);
             }
 
             var searchData = new SearchData();
