@@ -193,7 +193,7 @@ public class PageAnalyzer extends RecursiveAction {
 //                ForkJoinPool.commonPool().invoke(task);
 //                randomTimeout();
             } catch (Exception e) {
-                e.printStackTrace();
+                e.printStackTrace(System.err);
 
                 page.setCode(500); // Internal Server Error («Внутренняя ошибка сервера»)
                 page.setContent("taskList: " + e.getLocalizedMessage()); // TODO Удалить после отладки
@@ -248,7 +248,7 @@ public class PageAnalyzer extends RecursiveAction {
             updateSite(site);
             return;
         } catch (Exception e) {
-            e.printStackTrace();
+            e.printStackTrace(System.err);
 
             page.setCode(500); // Internal Server Error («Внутренняя ошибка сервера»)
             page.setContent("jsoup: " + e.getLocalizedMessage()); // TODO Удалить после отладки
@@ -387,7 +387,7 @@ public class PageAnalyzer extends RecursiveAction {
             try {
                 saveLemmatizationChanges(deletingLemmas, changedLemmas, deletingIndexes, changedIndexes);
             } catch (Exception e) {
-                e.printStackTrace();
+                e.printStackTrace(System.err);
                 saveError(site, e);
             }
 
@@ -494,9 +494,22 @@ public class PageAnalyzer extends RecursiveAction {
     private void randomTimeout() {
         synchronized (page.getSite()) {
             try {
-                var interval = searchBot.getRequestsInterval();
-                int min = interval.getMin();
-                var time = min + random.nextInt(interval.getMax() - min + 1); // Интервал миллисекунд
+                var interval = searchBot.getRequestsInterval(); // Интервал миллисекунд
+                if (interval == null) {
+                    return;
+                }
+
+                var min = interval.getMin();
+                var time = min;
+                var max = interval.getMax();
+                if (max != null && max > min) {
+                    time += random.nextInt(max - min + 1);
+                }
+
+                if (time == 0) {
+                    return;
+                }
+
                 Thread.sleep(time);
             } catch (Exception e) {
                 e.printStackTrace(System.err);
