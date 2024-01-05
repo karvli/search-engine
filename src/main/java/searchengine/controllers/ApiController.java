@@ -25,29 +25,46 @@ public class ApiController {
         return ResponseEntity.ok(statisticsService.getStatistics());
     }
 
-    @GetMapping("/startIndexing")
+    @GetMapping({"/startIndexing", "/startindexing"})
     public ResponseEntity<IndexingResponse> startIndexing() {
-        return ResponseEntity.ok(indexingService.startIndexing());
+        var response = indexingService.startIndexing();
+
+        if (!response.isResult()) {
+            return ResponseEntity
+                    .badRequest()
+                    .body(response);
+        }
+
+        return ResponseEntity.ok(response);
     }
 
-    @GetMapping("/stopIndexing")
+    @GetMapping({"/stopIndexing", "/stopindexing"})
     public ResponseEntity<IndexingResponse> stopIndexing() {
-        return ResponseEntity.ok(indexingService.stopIndexing());
+        var response = indexingService.stopIndexing();
+
+        if (!response.isResult()) {
+            return ResponseEntity
+                    .badRequest()
+                    .body(response);
+        }
+
+        return ResponseEntity.ok(response);
     }
 
     // C @RequestBody возникает ошибка Content-Type 'application/x-www-form-urlencoded;charset=UTF-8' is not supported.
     // Способ обхода, найденный в интернете: оставить автоматическое определение параметров.
-    @PostMapping("/indexPage")
+    @PostMapping({"/indexPage", "/indexpage"})
     public ResponseEntity<IndexingResponse> indexPage(IndexPageRequest body) {
         var url = body.getUrl();
+        var response = indexingService.indexPage(url);
 
-//        if (url.isBlank()) {
-//            return ResponseEntity
-//                    .status(HttpStatus.BAD_REQUEST)
-//                    .body(IndexingResponse.builder().result(false).error("Не передано значение url").build());
-//        }
+        if (!response.isResult()) {
+            return ResponseEntity
+                    .badRequest()
+                    .body(response);
+        }
 
-        return ResponseEntity.ok(indexingService.indexPage(url));
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/search")
@@ -69,6 +86,12 @@ public class ApiController {
             response = searchService.searchAllSites(query, limit, offset);
         } else {
             response = searchService.searchSite(site, query, limit, offset);
+        }
+
+        if (!response.isResult()) {
+            return ResponseEntity
+                    .badRequest()
+                    .body(response);
         }
 
         return ResponseEntity.ok(response);

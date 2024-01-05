@@ -1,10 +1,11 @@
+# Пример настройки для базы данных MySQL и схемы с названием search_engine.
 server:
   port: 8080
 
 spring:
   datasource:
     username: root
-    password: sql_890my
+    password: password
     url: jdbc:mysql://localhost:3306/search_engine?useSSL=false&requireSSL=false&allowPublicKeyRetrieval=true
   jpa:
     properties:
@@ -15,25 +16,24 @@ spring:
     show-sql: true
 
 
-# example values
-
+# Индексируемые сайты
 indexing-settings:
   sites:
-#    - url: https://www.lenta.ru
-#      name: Лента.ру
-    - url: https://www.skillbox.ru
-      name: Skillbox
-    - url: https://www.playback.ru
-      name: PlayBack.Ru
+    - url: https://example.com  # Адрес корня сайта без "/"
+      name: Тестовый сайт       # Наименование, которое будет использовано в api и веб-интерфейсе
 
 # Настройки бота, выполняющего индексацию
 search-bot-settings:
-  user-agent: Mozilla/5.0 (Windows; U; WindowsNT 5.1; en-US; rv1.8.1.6) Gecko/20070725 Firefox/2.0.0.6
-  referer: http://www.google.com
+  # Обязательные настройки, используемые Jsoup
+#  user-agent: например, имя бота или браузера
+#  referer: например, адрес другой поисковой системы
+  user-agent: my-bot
+  referer: some-site
+  # Необязательный интервал между запросами веб-страниц для анализа. Нужен для минимизации блокировки индексируемыми сайтами.
   requests-interval:
-    min: 500
-    max: 1000
+    min: 200  # Минимальное значение миллисекунд. В случае отсутствия считается равным 0.
+    max: 700 # Максимальное значение миллисекунд. В случае отсутствия, запросы выполняются с фиксированным интервалом min.
 
 # Настройки поиска результатов (для поисковых запросов)
 search-settings:
-  words-range: 2 # Сколько значимых слов нужно выводить слева и справа от поискового слова
+  words-range: 2 # Сколько значимых слов нужно выводить слева и справа от поискового слова. В случае отсутствия - 2.
