@@ -1,6 +1,7 @@
 package searchengine.services;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.java.Log;
 import lombok.val;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
@@ -16,10 +17,17 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.ForkJoinTask;
+import java.util.concurrent.TimeUnit;
+import java.util.logging.FileHandler;
+import java.util.logging.SimpleFormatter;
 import java.util.stream.Collectors;
+
+import static java.util.concurrent.ForkJoinPool.commonPool;
 
 @Service
 @RequiredArgsConstructor
+@Log
 public class IndexingServiceImpl implements IndexingService {
 
     private final SitesList sites;
@@ -30,7 +38,7 @@ public class IndexingServiceImpl implements IndexingService {
     private final ApplicationContext applicationContext;
 
     public static ForkJoinPool indexingPool;
-    public static List<PageAnalyzer> indexingTasks;
+    public static List<PageAnalyzer> indexingTasks = new ArrayList<>();
     public static List<Thread> indexingThreads;
 
 
@@ -50,7 +58,7 @@ public class IndexingServiceImpl implements IndexingService {
         }
 
         indexingPool = new ForkJoinPool();
-        indexingTasks = new ArrayList<>();
+        indexingTasks.clear();
 //        indexingThreads = new ArrayList<>();
 
         var now = LocalDateTime.now();
@@ -94,8 +102,8 @@ public class IndexingServiceImpl implements IndexingService {
                 var task = applicationContext.getBean(PageAnalyzer.class);
                 task.setPage(page);
 //            pool.execute(task);
-                indexingPool.execute(task);
-//            commonPool().submit(task);
+//                indexingPool.execute(task);
+            commonPool().execute(task);
 //            task.fork();
 //            taskList.add(task);
 
@@ -144,37 +152,62 @@ public class IndexingServiceImpl implements IndexingService {
                     .build();
         }
 
+        // МЕТКА
+        try {
+            var fh = new FileHandler("logs/api/" + System.currentTimeMillis() + ".log");
+//            SimpleFormatter formatter = new SimpleFormatter();
+//            fh.setFormatter(formatter);
+            log.addHandler(fh);
+        } catch (Exception e) {
+            e.printStackTrace(System.err);
+        }
+
         new Thread(() -> {
             //        indexingThreads.forEach(Thread::interrupt);
-            if (indexingPool != null) {
-//                indexingPool.shutdown();
-                indexingPool.shutdownNow();
-
-
-//                try {
-//                    var terminated = false;
-//                    while (!terminated) {
-//                        terminated = indexingPool.awaitTermination(5, TimeUnit.SECONDS);
-//                    }
-//                } catch (Exception e) {
-//                    e.printStackTrace();
-//                }
-
-            }
+//            if (indexingPool != null) {
+////                indexingPool.shutdown();
+//                indexingPool.shutdownNow();
+//
+//                log.info("Pool shutdown");
+//
+////                try {
+////                    var terminated = false;
+////                    while (!terminated) {
+////                        terminated = indexingPool.awaitTermination(5, TimeUnit.SECONDS);
+////                        log.info("terminated: " + terminated);
+////                    }
+////                } catch (Exception e) {
+////                    e.printStackTrace();
+////                    log.warning(e.getLocalizedMessage());
+////                }
+//
+//            }
 
             // TODO Дождаться завершения ForkJoinPool или отменить Task
-//            if (indexingTasks != null) {
-////                indexingTasks.forEach(pageAnalyzer -> pageAnalyzer.cancel(true));
-//                indexingTasks.forEach(ForkJoinTask::quietlyJoin);
-//            }
+            if (!indexingTasks.isEmpty()) {
+                log.info("tasks: " + indexingTasks.size());
+                indexingTasks.stream()
+                        .filter(task -> !task.isDone())
+                        .forEach(pageAnalyzer -> pageAnalyzer.cancel(true));
+                indexingTasks.forEach(ForkJoinTask::quietlyJoin); // У отменённых задач могут быть ещё не отменны подчинённые
+//                for (var task : indexingTasks) {
+//                    try {
+//                        task.join();
+//                    } catch (Exception e) {
+//                        log.warning(e.getLocalizedMessage());
+//                    }
+//                }
+            }
+
+            log.info("sites: " + indexingSites.size());
 
             var now = LocalDateTime.now();
             for (var indexingSite : indexingSites) {
-                indexingSite.setStatus(IndexingStatus.FAILED);
-                indexingSite.setLastError("Индексация остановлена пользователем");
-                indexingSite.setStatusTime(now);
-
                 synchronized (indexingSite) {
+                    log.info("Saving " + indexingSite.getUrl());
+                    indexingSite.setStatus(IndexingStatus.FAILED);
+                    indexingSite.setLastError("Индексация остановлена пользователем");
+                    indexingSite.setStatusTime(now);
                     siteRepository.save(indexingSite);
                 }
             }
