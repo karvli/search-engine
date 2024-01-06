@@ -1,5 +1,6 @@
 package searchengine.dto.indexing;
 
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
@@ -18,15 +19,11 @@ import searchengine.model.*;
 import searchengine.services.LemmasFinder;
 
 import java.time.LocalDateTime;
-import java.util.Collections;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
 import java.util.concurrent.ForkJoinTask;
 import java.util.concurrent.RecursiveAction;
 import java.util.function.Function;
 import java.util.logging.FileHandler;
-import java.util.logging.SimpleFormatter;
 import java.util.stream.Collectors;
 
 @Log
@@ -48,7 +45,9 @@ public class PageAnalyzer extends RecursiveAction {
 
     private Page page;
 
-    private List<PageAnalyzer> taskList = Collections.emptyList(); // Подчинённые задачи
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private List<PageAnalyzer> taskList = new ArrayList<>(); // Подчинённые задачи
 
     public static String getNormalizedPath(Site site, String url) {
         url = url.strip();
@@ -93,8 +92,13 @@ public class PageAnalyzer extends RecursiveAction {
 
     @Override
     public boolean cancel(boolean mayInterruptIfRunning) {
-        new Thread(this::stopChildrenTasks).start();
+//        new Thread(this::cancelChildrenTasks).start();
 //        stopChildrenTasks();
+
+        if (!cancelChildrenTasks(mayInterruptIfRunning)) {
+            return false;
+        }
+
         return super.cancel(mayInterruptIfRunning);
     }
 
@@ -190,20 +194,30 @@ public class PageAnalyzer extends RecursiveAction {
 //        var newPages = pageNode.getChildren();
 
 //        var taskList
-        taskList = newPages.stream()
-                .map(newPage -> {
-                    var task = applicationContext.getBean(PageAnalyzer.class);
-                    task.setPage(newPage);
+//        taskList = newPages.stream()
+//                .map(newPage -> {
+//                    var task = applicationContext.getBean(PageAnalyzer.class);
+//                    task.setPage(newPage);
+//
+//                    if (analyzeStopped()) {System.out.println("Остановлена"); return task;}
+//
+//                    task.fork();
+////                    randomTimeout();
+//
+//                    return task;
+//                })
+////                .map(ForkJoinTask::fork)
+//                .toList();
 
-                    if (analyzeStopped()) {System.out.println("Остановлена"); return task;}
+        for (var newPage : newPages) {
+            var task = applicationContext.getBean(PageAnalyzer.class);
+            task.setPage(newPage);
 
-                    task.fork();
-//                    randomTimeout();
+            if (analyzeStopped()) {System.out.println("Остановлена"); return;}
 
-                    return task;
-                })
-//                .map(ForkJoinTask::fork)
-                .toList();
+            task.fork();
+            taskList.add(task);
+        }
 
 //        var taskList = new ArrayList<PageAnalyzer>();
 //        for (Page newPage : newPages) {
@@ -237,10 +251,12 @@ public class PageAnalyzer extends RecursiveAction {
 
                 saveError(site, e);
             }
+
             if (analyzeStopped()) {System.out.println("Остановлена"); return;}
         }
 
 //        if (isCancelled()) {System.out.println("Остановлена"); return;}
+        if (analyzeStopped()) {System.out.println("Остановлена"); return;}
 
         if (page.isRoot() && site.getStatus() == IndexingStatus.INDEXING) {
             site.setStatus(IndexingStatus.INDEXED);
@@ -465,6 +481,8 @@ public class PageAnalyzer extends RecursiveAction {
     }
 
     private void saveError(Site site, String error) {
+        log.warning(site.getUrl().concat(": ").concat(error));
+
         site.setLastError(error);
         site.setStatus(IndexingStatus.FAILED);
         updateSite(site);
@@ -585,21 +603,25 @@ public class PageAnalyzer extends RecursiveAction {
         var stopped = isCancelled() || page.getSite().indexingFailed();
 
         if (stopped) {
-            stopChildrenTasks();
-//            log.info("Stopped");
+            cancelChildrenTasks();
+            taskList.forEach(ForkJoinTask::quietlyJoin);
+            if (!taskList.isEmpty()) log.info(page.getSite().getUrl().concat(" - stopped tasks: " + taskList.size()));
         }
 
         return stopped;
     }
 
-    private void stopChildrenTasks() {
+    private boolean cancelChildrenTasks(boolean mayInterruptIfRunning) {
         var tasks = taskList.stream()
                 .filter(task -> !task.isDone())
                 .toList();
-        int stoppingTasks = tasks.size();
-        if (stoppingTasks > 0) log.info("Stopping tasks: " + stoppingTasks);
-        tasks.forEach(task -> task.cancel(true));
-        taskList.forEach(ForkJoinTask::quietlyJoin);
-        if (stoppingTasks > 0) log.info("Stopped tasks: " + stoppingTasks);
+        var cancelled = tasks.stream()
+                .allMatch(task -> task.cancel(mayInterruptIfRunning));
+        if (!tasks.isEmpty()) log.info(page.getSite().getUrl().concat(" - cancelled tasks: ") + tasks.size());
+        return cancelled;
+    }
+
+    private boolean cancelChildrenTasks() {
+        return cancelChildrenTasks(true);
     }
 }
