@@ -15,8 +15,10 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.ForkJoinTask;
 import java.util.stream.Collectors;
+
+import static java.util.concurrent.ForkJoinPool.commonPool;
 
 @Service
 @RequiredArgsConstructor
@@ -29,9 +31,8 @@ public class IndexingServiceImpl implements IndexingService {
     private final IndexRepository indexRepository;
     private final ApplicationContext applicationContext;
 
-    public static ForkJoinPool indexingPool;
-    public static List<PageAnalyzer> indexingTasks;
-    public static List<Thread> indexingThreads;
+    private static final List<PageAnalyzer> indexingTasks = new ArrayList<>();
+    private static boolean indexingCancelling = false; // Для конкретизации сообщений об ошибках
 
 
     @Override
@@ -42,16 +43,18 @@ public class IndexingServiceImpl implements IndexingService {
 
         var currentSites = siteRepository.findByUrlIn(urls);
 
-        if (currentSites.stream().anyMatch(site -> site.getStatus() == IndexingStatus.INDEXING)) {
+        if (!indexingTasks.isEmpty() // На случай перезапуска приложения в процессе индексации
+                && currentSites.stream().anyMatch(site -> site.getStatus() == IndexingStatus.INDEXING)) {
+            var error = indexingCancelling ? "Предыдущая индексация ещё останавливается"
+                    : "Индексация уже запущена";
+
             return IndexingResponse.builder()
                     .result(false)
-                    .error("Индексация уже запущена")
+                    .error(error)
                     .build();
         }
 
-        indexingPool = new ForkJoinPool();
-        indexingTasks = new ArrayList<>();
-//        indexingThreads = new ArrayList<>();
+        indexingCancelling = false;
 
         var now = LocalDateTime.now();
 
@@ -71,61 +74,24 @@ public class IndexingServiceImpl implements IndexingService {
             var page = new Page();
             page.setSite(newSite);
             page.setPath("/");
-            page.setCode(102); // http 102 - "Идёт обработка"
+            page.setCode(102); // Processing («Идёт обработка»)
 
             rootPages.add(page);
+
+            // Чтобы запретить запуск нового индексирования
+            var task = applicationContext.getBean(PageAnalyzer.class);
+            task.setPage(page);
+
+            indexingTasks.add(task);
         }
-
-//        var taskList = new ArrayList<PageAnalyzer>();
-
-//        var pool = new ForkJoinPool(
-//                Runtime.getRuntime().availableProcessors(),
-//                defaultForkJoinWorkerThreadFactory,
-//                null
-//                , true);
-//        var pool = new ForkJoinPool();
 
         new Thread(() -> {
             siteRepository.deleteAll(currentSites);
             siteRepository.saveAll(indexingSites);
             pageRepository.saveAll(rootPages);
 
-            for (var page : rootPages) {
-                var task = applicationContext.getBean(PageAnalyzer.class);
-                task.setPage(page);
-//            pool.execute(task);
-                indexingPool.execute(task);
-//            commonPool().submit(task);
-//            task.fork();
-//            taskList.add(task);
-
-                indexingTasks.add(task);
-
-//            var thread = new Thread(() -> {
-//                var task = applicationContext.getBean(PageAnalyzer.class);
-//                task.setPage(page);
-//                commonPool().invoke(task);
-//
-//                var site = page.getSite();
-//                site.setStatusTime(LocalDateTime.now());
-//                site.setStatus(IndexingStatus.INDEXED);
-//                siteRepository.save(site);
-//            });
-//
-//            indexingThreads.add(thread);
-//            thread.start();
-            }
+            indexingTasks.forEach(task -> commonPool().execute(task));
         }).start();
-
-//        indexingTasks = rootPages.stream().map(page -> {
-//            var task = applicationContext.getBean(PageAnalyzer.class);
-//            task.setPage(page);
-//            return task;
-//        }).toList();
-//
-//        indexingPool.invokeAll(indexingTasks);
-
-//        taskList.forEach(ForkJoinTask::join);
 
         return IndexingResponse.builder()
                 .result(true)
@@ -142,44 +108,36 @@ public class IndexingServiceImpl implements IndexingService {
                     .result(false)
                     .error("Индексация не запущена")
                     .build();
+        } else if (indexingCancelling) {
+            return IndexingResponse.builder()
+                    .result(false)
+                    .error("Индексация уже останавливается")
+                    .build();
         }
 
+        indexingCancelling = true;
+
         new Thread(() -> {
-            //        indexingThreads.forEach(Thread::interrupt);
-            if (indexingPool != null) {
-//                indexingPool.shutdown();
-                indexingPool.shutdownNow();
+            if (!indexingTasks.isEmpty()) {
+                indexingTasks.stream()
+                        .filter(task -> !task.isDone())
+                        .forEach(task -> task.cancel(true));
 
-
-//                try {
-//                    var terminated = false;
-//                    while (!terminated) {
-//                        terminated = indexingPool.awaitTermination(5, TimeUnit.SECONDS);
-//                    }
-//                } catch (Exception e) {
-//                    e.printStackTrace();
-//                }
-
+                // У отменённых задач могут быть ещё не отменены подчинённые. Ожидание отмены всей иерархии.
+                indexingTasks.forEach(ForkJoinTask::quietlyJoin);
             }
-
-            // TODO Дождаться завершения ForkJoinPool или отменить Task
-//            if (indexingTasks != null) {
-////                indexingTasks.forEach(pageAnalyzer -> pageAnalyzer.cancel(true));
-//                indexingTasks.forEach(ForkJoinTask::quietlyJoin);
-//            }
 
             var now = LocalDateTime.now();
             for (var indexingSite : indexingSites) {
-                indexingSite.setStatus(IndexingStatus.FAILED);
-                indexingSite.setLastError("Индексация остановлена пользователем");
-                indexingSite.setStatusTime(now);
-
                 synchronized (indexingSite) {
+                    indexingSite.setStatus(IndexingStatus.FAILED);
+                    indexingSite.setLastError("Индексация остановлена пользователем");
+                    indexingSite.setStatusTime(now);
                     siteRepository.save(indexingSite);
                 }
             }
 
-//            siteRepository.saveAll(indexingSites);
+            indexingTasks.clear(); // Чтобы разрешить запуск нового индексирования
         }).start();
 
         return IndexingResponse.builder()
@@ -221,7 +179,7 @@ public class IndexingServiceImpl implements IndexingService {
             site.setName(configSite.getName());
             site.setUrl(configSite.getUrl());
 
-            // По идее, статусом управляет общий процесс, но т.к. он не запущен, меняем статус
+            // В стандартной ситуации статусом управляет общий процесс. Но т.к. он не запускался, меняем статус.
             site.setStatus(IndexingStatus.INDEXING);
         }
         site.setStatusTime(LocalDateTime.now());
@@ -239,7 +197,7 @@ public class IndexingServiceImpl implements IndexingService {
 
         var newPage = page == null;
 
-        if (!newPage)  {
+        if (!newPage) {
 
             if (page.getCode() == 102) {
                 // Страница уже в очереди на обновление. Дальнейшее действия не требуются.
@@ -258,8 +216,6 @@ public class IndexingServiceImpl implements IndexingService {
         page.setPath(path);
         page.setCode(102);
 
-        pageRepository.save(page);
-
         val finalSite = site;
         val finalPage = page;
         val finalDeletingThread = deletingThread;
@@ -273,6 +229,8 @@ public class IndexingServiceImpl implements IndexingService {
                     throw new RuntimeException(e);
                 }
             }
+
+            pageRepository.save(finalPage);
 
             var pageAnalyzer = applicationContext.getBean(PageAnalyzer.class);
             pageAnalyzer.setPage(finalPage);

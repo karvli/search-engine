@@ -1,5 +1,6 @@
 package searchengine.dto.indexing;
 
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
@@ -17,10 +18,8 @@ import searchengine.model.*;
 import searchengine.services.LemmasFinder;
 
 import java.time.LocalDateTime;
-import java.util.Collections;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
+import java.util.concurrent.ForkJoinTask;
 import java.util.concurrent.RecursiveAction;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -40,8 +39,11 @@ public class PageAnalyzer extends RecursiveAction {
     private final IndexRepository indexRepository;
 
     private final Random random = new Random();
-
     private Page page;
+
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private List<PageAnalyzer> children = new ArrayList<>(); // Подчинённые задачи
 
     public static String getNormalizedPath(Site site, String url) {
         url = url.strip();
@@ -73,7 +75,7 @@ public class PageAnalyzer extends RecursiveAction {
         }
 
         // Обработка обоих вариантов окончания пути к сайту
-        if(!url.startsWith("/")) {
+        if (!url.startsWith("/")) {
             url = "/" + url;
         }
 
@@ -85,9 +87,21 @@ public class PageAnalyzer extends RecursiveAction {
     }
 
     @Override
-    protected void compute() {
+    public boolean cancel(boolean mayInterruptIfRunning) {
+        if (!cancelChildrenTasks(mayInterruptIfRunning)) {
+            return false;
+        }
 
+        return super.cancel(mayInterruptIfRunning);
+    }
+
+    @Override
+    protected void compute() {
         randomTimeout();
+
+        if (analyzeStopped()) {
+            return;
+        }
 
         analyzePage();
         if (!page.canBeParsed()) {
@@ -96,114 +110,48 @@ public class PageAnalyzer extends RecursiveAction {
 
         var site = page.getSite();
 
-//        if (isCancelled()) {System.out.println("Остановлена"); return;}
-        if (site.indexingFailed()) {System.out.println("Остановлена"); return;}
-
-//        var taskList = new ArrayList<PageAnalyzer>();
-
-        // URL начинается с переданного корня и не содержит ссылок на внутренние элементы страницы (не содержит #)
-        var document = Jsoup.parse(page.getContent());
-        var regex = "(?i)^((" + site.getUrl() + ")|/)[^#]*$";
-        var elements = document.select("a[href~=" + regex + "]");
-
-//        var taskList =
-        var paths = elements.stream()
-                .map(element -> element.attr("href"))
-//                .filter(s -> !s.isBlank())
-                .map(this::getNormalizedPath)
-                .distinct()
-
-//                .map(this::forkTask)
-//                .filter(Objects::nonNull)
-
-//                .map(ForkJoinTask::fork)
-                .toList();
-//                .forEach(ForkJoinTask::quietlyJoin);
-
-        List<Page> newPages;
-
-        if (site.indexingFailed()) {System.out.println("Остановлена"); return;}
-
-        synchronized (site) {
-            var existingPaths = pageRepository.findBySiteAndPathIn(site, paths).stream()
-                    .map(Page::getPath)
-                    .map(this::getNormalizedPath)
-                    .distinct()
-                    .toList();
-
-//            if (isCancelled()) {System.out.println("Остановлена"); return;}
-
-            newPages = paths.stream()
-                    .filter(p -> !existingPaths.contains(p))
-                    .map(path -> {
-                        var newPage = new Page();
-                        newPage.setSite(site);
-                        newPage.setPath(path);
-                        newPage.setCode(102); // Processing («Идёт обработка»)
-
-                        return newPage;
-                    })
-                    .toList();
-
-            if (site.indexingFailed()) {System.out.println("Остановлена"); return;}
-
-            pageRepository.saveAll(newPages);
+        if (analyzeStopped()) {
+            return;
         }
 
-        updateSite(site);
+        var newPages = findNewPages();
 
-//        if (isCancelled()) {System.out.println("Остановлена"); return;}
+        for (var newPage : newPages) {
+            var task = applicationContext.getBean(PageAnalyzer.class);
+            task.setPage(newPage);
 
-//        var pageNode = applicationContext.getBean(PageNode.class);
-//        pageNode.compute();
-//        var newPages = pageNode.getChildren();
+            if (analyzeStopped()) {
+                return;
+            }
 
-        var taskList = newPages.stream()
-                .map(newPage -> {
-                    var task = applicationContext.getBean(PageAnalyzer.class);
-                    task.setPage(newPage);
-                    task.fork();
-//                    randomTimeout();
+            task.fork();
+            children.add(task);
+        }
 
-                    return task;
-                })
-//                .map(ForkJoinTask::fork)
-                .toList();
+        if (analyzeStopped()) {
+            return;
+        }
 
-//        var taskList = new ArrayList<PageAnalyzer>();
-//        for (Page newPage : newPages) {
-//            var task = applicationContext.getBean(PageAnalyzer.class);
-//            task.setPage(newPage);
-//            task.fork();
-//
-//            taskList.add(task);
-//            randomTimeout();
-//        }
-
-
-//        taskList.forEach(ForkJoinTask::join);
-
-//        if (isCancelled()) {System.out.println("Остановлена"); return;}
-        if (site.indexingFailed()) {System.out.println("Остановлена"); return;}
-
-        for (var task : taskList) {
+        for (var task : children) {
             try {
                 task.join();
-//                task.invoke();
-//                ForkJoinPool.commonPool().invoke(task);
-//                randomTimeout();
             } catch (Exception e) {
                 e.printStackTrace(System.err);
 
                 page.setCode(500); // Internal Server Error («Внутренняя ошибка сервера»)
-                page.setContent("taskList: " + e.getLocalizedMessage()); // TODO Удалить после отладки
                 savePage(page);
 
                 saveError(site, e);
             }
+
+            if (analyzeStopped()) {
+                return;
+            }
         }
 
-//        if (isCancelled()) {System.out.println("Остановлена"); return;}
+        if (analyzeStopped()) {
+            return;
+        }
 
         if (page.isRoot() && site.getStatus() == IndexingStatus.INDEXING) {
             site.setStatus(IndexingStatus.INDEXED);
@@ -251,7 +199,6 @@ public class PageAnalyzer extends RecursiveAction {
             e.printStackTrace(System.err);
 
             page.setCode(500); // Internal Server Error («Внутренняя ошибка сервера»)
-            page.setContent("jsoup: " + e.getLocalizedMessage()); // TODO Удалить после отладки
             savePage(page);
 
             saveError(site, e);
@@ -259,10 +206,11 @@ public class PageAnalyzer extends RecursiveAction {
             return;
         }
 
+        if (isCancelled()) {
+            return;
+        }
 
         var html = document.html();
-//        byte[] b = html.getBytes(document.charset());
-//        html = new String(b, StandardCharsets.UTF_8);
 
         /* При сохранении может возникнуть ошибка:
         SQL Error: 1366, SQLState: HY000
@@ -278,6 +226,10 @@ public class PageAnalyzer extends RecursiveAction {
         // Леммы
         var lemmasFinder = applicationContext.getBean(LemmasFinder.class);
         var lemmas = lemmasFinder.findLemmasInHtml(html);
+
+        if (isCancelled()) {
+            return;
+        }
 
         synchronized (site) {
 
@@ -300,6 +252,10 @@ public class PageAnalyzer extends RecursiveAction {
             List<Index> unchangedIndexes = new LinkedList<>();
 
             for (var lemmaEntry : lemmas.entrySet()) {
+
+                if (isCancelled()) {
+                    return;
+                }
 
                 // ЛЕММА
 
@@ -331,6 +287,9 @@ public class PageAnalyzer extends RecursiveAction {
                     changedLemmas.add(lemma);
                 }
 
+                if (isCancelled()) {
+                    return;
+                }
 
                 // ИНДЕКС
 
@@ -362,6 +321,10 @@ public class PageAnalyzer extends RecursiveAction {
                 changedIndexes.add(index);
             }
 
+            if (isCancelled()) {
+                return;
+            }
+
             // Проверка неиспользованных лемм: корректировка frequency или удаление леммы
             var checkingLemmas = usedLemmas.stream()
                     .filter(lemma -> !changedLemmas.contains(lemma))
@@ -379,10 +342,14 @@ public class PageAnalyzer extends RecursiveAction {
                 changedLemmas.add(lemma);
             }
 
-            var deletingIndexes =usedIndexes.stream()
+            var deletingIndexes = usedIndexes.stream()
                     .filter(index -> !changedIndexes.contains(index))
                     .filter(index -> !unchangedIndexes.contains(index))
                     .toList();
+
+            if (isCancelled()) {
+                return;
+            }
 
             try {
                 saveLemmatizationChanges(deletingLemmas, changedLemmas, deletingIndexes, changedIndexes);
@@ -392,6 +359,61 @@ public class PageAnalyzer extends RecursiveAction {
             }
 
         }
+    }
+
+    private List<Page> findNewPages() {
+        var site = page.getSite();
+
+        // URL начинается с переданного корня и не содержит ссылок на внутренние элементы страницы (не содержит #)
+        var document = Jsoup.parse(page.getContent());
+        var regex = "(?i)^((" + site.getUrl() + ")|/)[^#]*$";
+        var elements = document.select("a[href~=" + regex + "]");
+
+        var paths = elements.stream()
+                .map(element -> element.attr("href"))
+                .map(this::getNormalizedPath)
+                .distinct()
+                .toList();
+
+        if (analyzeStopped()) {
+            return Collections.emptyList();
+        }
+
+        List<Page> newPages;
+
+        synchronized (site) {
+            var existingPaths = pageRepository.findBySiteAndPathIn(site, paths).stream()
+                    .map(Page::getPath)
+                    .map(this::getNormalizedPath)
+                    .distinct()
+                    .toList();
+
+            if (analyzeStopped()) {
+                return Collections.emptyList();
+            }
+
+            newPages = paths.stream()
+                    .filter(p -> !existingPaths.contains(p))
+                    .map(path -> {
+                        var newPage = new Page();
+                        newPage.setSite(site);
+                        newPage.setPath(path);
+                        newPage.setCode(102); // Processing («Идёт обработка»)
+
+                        return newPage;
+                    })
+                    .toList();
+
+            if (analyzeStopped()) {
+                return Collections.emptyList();
+            }
+
+            pageRepository.saveAll(newPages);
+        }
+
+        updateSite(site);
+
+        return newPages;
     }
 
     private void savePage(Page page) {
@@ -406,30 +428,25 @@ public class PageAnalyzer extends RecursiveAction {
     }
 
     private void updateSite(Site site) {
-//        synchronized (site) {
-//            site = siteRepository.findById(site.getId()).get();
-//            if (site.indexingFailed()) {
-//                return;
-//            }
-
-            site.setStatusTime(LocalDateTime.now());
-            saveSite(site);
-//        }
+        site.setStatusTime(LocalDateTime.now());
+        saveSite(site);
     }
 
     private void saveError(Site site, String error) {
         site.setLastError(error);
         site.setStatus(IndexingStatus.FAILED);
         updateSite(site);
-//        site.setStatusTime(LocalDateTime.now());
-//        saveSite(site);
     }
 
     private void saveError(Site site, Exception error) {
-        saveError(site,  error.getLocalizedMessage());
+        saveError(site, error.getLocalizedMessage());
     }
 
     private void saveSite(Site site) {
+        if (analyzeStopped()) {
+            return;
+        }
+
         synchronized (site) {
             try {
                 siteRepository.save(site);
@@ -440,56 +457,6 @@ public class PageAnalyzer extends RecursiveAction {
 
         }
     }
-
-//    private synchronized PageAnalyzer forkTask(String path) {
-//
-//        Page newPage = null;
-//
-//        var site = page.getSite();
-//
-////        synchronized (site) {
-//
-//        newPage = pageRepository.findBySiteAndPath(site, path);
-//        if (newPage == null) {
-//            return null;
-//        }
-//
-//        try {
-//            newPage = new Page();
-////                newPage = applicationContext.getBean(Page.class);
-//            newPage.setSite(site);
-//            newPage.setPath(path);
-//            newPage.setCode(102); // http 102 - "Идёт обработка"
-//            savePage(newPage);
-//
-//            updateSite(site);
-//        } catch (Exception e) {
-//
-//            page.setCode(500); // Internal Server Error («Внутренняя ошибка сервера»)
-//            page.setContent("task: " + e.getLocalizedMessage()); // TODO Удалить после отладки
-//            savePage(page);
-//
-//            site.setLastError(e.getLocalizedMessage());
-//            updateSite(site);
-//
-//            var msg = e.toString();
-//            e.printStackTrace(System.err);
-//
-//            return null;
-//        }
-////        }
-//
-////        PageAnalyzer task;
-////
-////        synchronized (site) {
-//        var task = applicationContext.getBean(PageAnalyzer.class);
-//        task.setPage(newPage);
-//        task.fork();
-////        }
-//
-//        return task;
-////        return task.fork();
-//    }
 
     private void randomTimeout() {
         synchronized (page.getSite()) {
@@ -519,12 +486,33 @@ public class PageAnalyzer extends RecursiveAction {
 
     @Transactional
     private void saveLemmatizationChanges(List<Lemma> deletingLemmas, List<Lemma> savingLemmas,
-                                          List<Index> deletingIndexes, List<Index> savingIndexes){
+                                          List<Index> deletingIndexes, List<Index> savingIndexes) {
         synchronized (page) {
             indexRepository.deleteAll(deletingIndexes);
             lemmaRepository.deleteAll(deletingLemmas);
             lemmaRepository.saveAll(savingLemmas);
             indexRepository.saveAll(savingIndexes);
         }
+    }
+
+    private boolean analyzeStopped() {
+        var stopped = isCancelled() || page.getSite().indexingFailed();
+
+        if (stopped) {
+            cancelChildrenTasks();
+            children.forEach(ForkJoinTask::quietlyJoin);
+        }
+
+        return stopped;
+    }
+
+    private boolean cancelChildrenTasks(boolean mayInterruptIfRunning) {
+        return children.stream()
+                .filter(task -> !task.isDone())
+                .allMatch(task -> task.cancel(mayInterruptIfRunning));
+    }
+
+    private boolean cancelChildrenTasks() {
+        return cancelChildrenTasks(true);
     }
 }
