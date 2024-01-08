@@ -45,9 +45,10 @@ public class PageAnalyzer extends RecursiveAction {
 
     private Page page;
 
+
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
-    private List<PageAnalyzer> taskList = new ArrayList<>(); // Подчинённые задачи
+    private List<PageAnalyzer> children = new ArrayList<>(); // Подчинённые задачи
 
     public static String getNormalizedPath(Site site, String url) {
         url = url.strip();
@@ -92,9 +93,6 @@ public class PageAnalyzer extends RecursiveAction {
 
     @Override
     public boolean cancel(boolean mayInterruptIfRunning) {
-//        new Thread(this::cancelChildrenTasks).start();
-//        stopChildrenTasks();
-
         if (!cancelChildrenTasks(mayInterruptIfRunning)) {
             return false;
         }
@@ -127,11 +125,7 @@ public class PageAnalyzer extends RecursiveAction {
 
         var site = page.getSite();
 
-//        if (isCancelled()) {System.out.println("Остановлена"); return;}
-//        if (site.indexingFailed()) {System.out.println("Остановлена"); return;}
         if (analyzeStopped()) {System.out.println("Остановлена"); return;}
-
-//        var taskList = new ArrayList<PageAnalyzer>();
 
         // URL начинается с переданного корня и не содержит ссылок на внутренние элементы страницы (не содержит #)
         var document = Jsoup.parse(page.getContent());
@@ -141,20 +135,12 @@ public class PageAnalyzer extends RecursiveAction {
 //        var taskList =
         var paths = elements.stream()
                 .map(element -> element.attr("href"))
-//                .filter(s -> !s.isBlank())
                 .map(this::getNormalizedPath)
                 .distinct()
-
-//                .map(this::forkTask)
-//                .filter(Objects::nonNull)
-
-//                .map(ForkJoinTask::fork)
                 .toList();
-//                .forEach(ForkJoinTask::quietlyJoin);
 
         List<Page> newPages;
 
-//        if (site.indexingFailed()) {System.out.println("Остановлена"); return;}
         if (analyzeStopped()) {System.out.println("Остановлена"); return;}
 
         synchronized (site) {
@@ -164,7 +150,6 @@ public class PageAnalyzer extends RecursiveAction {
                     .distinct()
                     .toList();
 
-//            if (isCancelled()) {System.out.println("Остановлена"); return;}
             if (analyzeStopped()) {System.out.println("Остановлена"); return;}
 
             newPages = paths.stream()
@@ -179,35 +164,12 @@ public class PageAnalyzer extends RecursiveAction {
                     })
                     .toList();
 
-//            if (site.indexingFailed()) {System.out.println("Остановлена"); return;}
             if (analyzeStopped()) {System.out.println("Остановлена"); return;}
 
             pageRepository.saveAll(newPages);
         }
 
         updateSite(site);
-
-//        if (isCancelled()) {System.out.println("Остановлена"); return;}
-
-//        var pageNode = applicationContext.getBean(PageNode.class);
-//        pageNode.compute();
-//        var newPages = pageNode.getChildren();
-
-//        var taskList
-//        taskList = newPages.stream()
-//                .map(newPage -> {
-//                    var task = applicationContext.getBean(PageAnalyzer.class);
-//                    task.setPage(newPage);
-//
-//                    if (analyzeStopped()) {System.out.println("Остановлена"); return task;}
-//
-//                    task.fork();
-////                    randomTimeout();
-//
-//                    return task;
-//                })
-////                .map(ForkJoinTask::fork)
-//                .toList();
 
         for (var newPage : newPages) {
             var task = applicationContext.getBean(PageAnalyzer.class);
@@ -216,32 +178,14 @@ public class PageAnalyzer extends RecursiveAction {
             if (analyzeStopped()) {System.out.println("Остановлена"); return;}
 
             task.fork();
-            taskList.add(task);
+            children.add(task);
         }
 
-//        var taskList = new ArrayList<PageAnalyzer>();
-//        for (Page newPage : newPages) {
-//            var task = applicationContext.getBean(PageAnalyzer.class);
-//            task.setPage(newPage);
-//            task.fork();
-//
-//            taskList.add(task);
-//            randomTimeout();
-//        }
-
-
-//        taskList.forEach(ForkJoinTask::join);
-
-//        if (isCancelled()) {System.out.println("Остановлена"); return;}
-//        if (site.indexingFailed()) {System.out.println("Остановлена"); return;}
         if (analyzeStopped()) {System.out.println("Остановлена"); return;}
 
-        for (var task : taskList) {
+        for (var task : children) {
             try {
                 task.join();
-//                task.invoke();
-//                ForkJoinPool.commonPool().invoke(task);
-//                randomTimeout();
             } catch (Exception e) {
                 e.printStackTrace(System.err);
 
@@ -255,7 +199,6 @@ public class PageAnalyzer extends RecursiveAction {
             if (analyzeStopped()) {System.out.println("Остановлена"); return;}
         }
 
-//        if (isCancelled()) {System.out.println("Остановлена"); return;}
         if (analyzeStopped()) {System.out.println("Остановлена"); return;}
 
         if (page.isRoot() && site.getStatus() == IndexingStatus.INDEXING) {
@@ -315,8 +258,6 @@ public class PageAnalyzer extends RecursiveAction {
         if (isCancelled()) {System.out.println("Отменена"); return;}
 
         var html = document.html();
-//        byte[] b = html.getBytes(document.charset());
-//        html = new String(b, StandardCharsets.UTF_8);
 
         /* При сохранении может возникнуть ошибка:
         SQL Error: 1366, SQLState: HY000
@@ -469,15 +410,8 @@ public class PageAnalyzer extends RecursiveAction {
     }
 
     private void updateSite(Site site) {
-//        synchronized (site) {
-//            site = siteRepository.findById(site.getId()).get();
-//            if (site.indexingFailed()) {
-//                return;
-//            }
-
-            site.setStatusTime(LocalDateTime.now());
-            saveSite(site);
-//        }
+        site.setStatusTime(LocalDateTime.now());
+        saveSite(site);
     }
 
     private void saveError(Site site, String error) {
@@ -486,8 +420,6 @@ public class PageAnalyzer extends RecursiveAction {
         site.setLastError(error);
         site.setStatus(IndexingStatus.FAILED);
         updateSite(site);
-//        site.setStatusTime(LocalDateTime.now());
-//        saveSite(site);
     }
 
     private void saveError(Site site, Exception error) {
@@ -511,56 +443,6 @@ public class PageAnalyzer extends RecursiveAction {
 
         }
     }
-
-//    private synchronized PageAnalyzer forkTask(String path) {
-//
-//        Page newPage = null;
-//
-//        var site = page.getSite();
-//
-////        synchronized (site) {
-//
-//        newPage = pageRepository.findBySiteAndPath(site, path);
-//        if (newPage == null) {
-//            return null;
-//        }
-//
-//        try {
-//            newPage = new Page();
-////                newPage = applicationContext.getBean(Page.class);
-//            newPage.setSite(site);
-//            newPage.setPath(path);
-//            newPage.setCode(102); // http 102 - "Идёт обработка"
-//            savePage(newPage);
-//
-//            updateSite(site);
-//        } catch (Exception e) {
-//
-//            page.setCode(500); // Internal Server Error («Внутренняя ошибка сервера»)
-//            page.setContent("task: " + e.getLocalizedMessage()); // TODO Удалить после отладки
-//            savePage(page);
-//
-//            site.setLastError(e.getLocalizedMessage());
-//            updateSite(site);
-//
-//            var msg = e.toString();
-//            e.printStackTrace(System.err);
-//
-//            return null;
-//        }
-////        }
-//
-////        PageAnalyzer task;
-////
-////        synchronized (site) {
-//        var task = applicationContext.getBean(PageAnalyzer.class);
-//        task.setPage(newPage);
-//        task.fork();
-////        }
-//
-//        return task;
-////        return task.fork();
-//    }
 
     private void randomTimeout() {
         synchronized (page.getSite()) {
@@ -604,15 +486,15 @@ public class PageAnalyzer extends RecursiveAction {
 
         if (stopped) {
             cancelChildrenTasks();
-            taskList.forEach(ForkJoinTask::quietlyJoin);
-            if (!taskList.isEmpty()) log.info(page.getSite().getUrl().concat(" - stopped tasks: " + taskList.size()));
+            children.forEach(ForkJoinTask::quietlyJoin);
+            if (!children.isEmpty()) log.info(page.getSite().getUrl().concat(" - stopped tasks: " + children.size()));
         }
 
         return stopped;
     }
 
     private boolean cancelChildrenTasks(boolean mayInterruptIfRunning) {
-        var tasks = taskList.stream()
+        var tasks = children.stream()
                 .filter(task -> !task.isDone())
                 .toList();
         var cancelled = tasks.stream()
