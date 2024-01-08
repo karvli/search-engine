@@ -1,7 +1,6 @@
 package searchengine.services;
 
 import lombok.RequiredArgsConstructor;
-import lombok.extern.java.Log;
 import lombok.val;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
@@ -17,14 +16,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ForkJoinTask;
-import java.util.logging.FileHandler;
 import java.util.stream.Collectors;
 
 import static java.util.concurrent.ForkJoinPool.commonPool;
 
 @Service
 @RequiredArgsConstructor
-@Log
 public class IndexingServiceImpl implements IndexingService {
 
     private final SitesList sites;
@@ -120,19 +117,8 @@ public class IndexingServiceImpl implements IndexingService {
 
         indexingCancelling = true;
 
-        // МЕТКА
-        try {
-            var fh = new FileHandler("logs/api/" + System.currentTimeMillis() + ".log");
-//            SimpleFormatter formatter = new SimpleFormatter();
-//            fh.setFormatter(formatter);
-            log.addHandler(fh);
-        } catch (Exception e) {
-            e.printStackTrace(System.err);
-        }
-
         new Thread(() -> {
             if (!indexingTasks.isEmpty()) {
-                log.info("tasks: " + indexingTasks.size());
                 indexingTasks.stream()
                         .filter(task -> !task.isDone())
                         .forEach(task -> task.cancel(true));
@@ -141,12 +127,9 @@ public class IndexingServiceImpl implements IndexingService {
                 indexingTasks.forEach(ForkJoinTask::quietlyJoin);
             }
 
-            log.info("sites: " + indexingSites.size());
-
             var now = LocalDateTime.now();
             for (var indexingSite : indexingSites) {
                 synchronized (indexingSite) {
-                    log.info("Saving " + indexingSite.getUrl());
                     indexingSite.setStatus(IndexingStatus.FAILED);
                     indexingSite.setLastError("Индексация остановлена пользователем");
                     indexingSite.setStatusTime(now);
