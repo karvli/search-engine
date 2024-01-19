@@ -1,0 +1,38 @@
+<configuration>
+
+    <!--Использование стандартных настроек, дополненных ниже-->
+    <include resource="org/springframework/boot/logging/logback/base.xml"/>
+
+    <timestamp key="byMillis" datePattern="yyyyMMdd_HHmmss_SSS"/>
+
+    <appender name="FILE_ALL_INFO" class="ch.qos.logback.core.FileAppender">
+        <file>logs/${byMillis}_all_info.log</file>
+        <encoder>
+            <pattern>
+                %d{yyyy-MM-dd HH:mm:ss.SSS} %-5level ${PID} [%thread] %logger{50} : %msg%n
+            </pattern>
+        </encoder>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>INFO</level>
+        </filter>
+    </appender>
+    <appender name="FILE_ERRORS" class="ch.qos.logback.core.FileAppender">
+        <file>logs/${byMillis}_errors.log</file>
+        <encoder>
+            <pattern>
+                %d{yyyy-MM-dd HH:mm:ss.SSS} %-5level ${PID} [%thread] %logger{40} : %msg%n
+            </pattern>
+        </encoder>
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>ERROR</level>
+            <onMatch>ACCEPT</onMatch>
+            <onMismatch>DENY</onMismatch>
+        </filter>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="FILE_ALL_INFO"/>
+        <appender-ref ref="FILE_ERRORS"/>
+    </root>
+
+</configuration>
