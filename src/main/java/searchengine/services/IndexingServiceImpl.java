@@ -1,6 +1,7 @@
 package searchengine.services;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
@@ -20,6 +21,7 @@ import java.util.stream.Collectors;
 
 import static java.util.concurrent.ForkJoinPool.commonPool;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class IndexingServiceImpl implements IndexingService {
@@ -33,7 +35,6 @@ public class IndexingServiceImpl implements IndexingService {
 
     private static final List<PageAnalyzer> indexingTasks = new ArrayList<>();
     private static boolean indexingCancelling = false; // Для конкретизации сообщений об ошибках
-
 
     @Override
     public synchronized IndexingResponse startIndexing() {
@@ -86,11 +87,21 @@ public class IndexingServiceImpl implements IndexingService {
         }
 
         new Thread(() -> {
+            log.info("Запуск полной индексации");
+            var start = System.currentTimeMillis();
+
             siteRepository.deleteAll(currentSites);
             siteRepository.saveAll(indexingSites);
             pageRepository.saveAll(rootPages);
 
             indexingTasks.forEach(task -> commonPool().execute(task));
+            indexingTasks.forEach(ForkJoinTask::quietlyJoin);
+
+            if (indexingCancelling) {
+                log.info("Полная индексации отменена пользователем");
+            } else {
+                log.info("Полная индексация выполнена за {} мс.", System.currentTimeMillis() - start);
+            }
         }).start();
 
         return IndexingResponse.builder()
@@ -118,6 +129,9 @@ public class IndexingServiceImpl implements IndexingService {
         indexingCancelling = true;
 
         new Thread(() -> {
+            log.info("Запуск остановки полной индексации");
+            var start = System.currentTimeMillis();
+
             if (!indexingTasks.isEmpty()) {
                 indexingTasks.stream()
                         .filter(task -> !task.isDone())
@@ -138,6 +152,8 @@ public class IndexingServiceImpl implements IndexingService {
             }
 
             indexingTasks.clear(); // Чтобы разрешить запуск нового индексирования
+
+            log.info("Полная индексация остановлена за {} мс.", System.currentTimeMillis() - start);
         }).start();
 
         return IndexingResponse.builder()
@@ -219,8 +235,11 @@ public class IndexingServiceImpl implements IndexingService {
         val finalSite = site;
         val finalPage = page;
         val finalDeletingThread = deletingThread;
+        val finalUrl = url;
 
         new Thread(() -> {
+            log.info("Запуск индексации страницы {}", finalUrl);
+            var start = System.currentTimeMillis();
 
             if (finalDeletingThread != null) {
                 try {
@@ -241,6 +260,8 @@ public class IndexingServiceImpl implements IndexingService {
                 finalSite.setStatus(IndexingStatus.INDEXED);
                 siteRepository.save(finalSite);
             }
+
+            log.info("Индексации страницы {} выполнена за {} мс.", finalUrl, System.currentTimeMillis() - start);
         }).start();
 
         return IndexingResponse.builder()
