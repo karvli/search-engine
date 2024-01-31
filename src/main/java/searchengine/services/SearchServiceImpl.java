@@ -2,6 +2,7 @@ package searchengine.services;
 
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 import org.jsoup.Jsoup;
 import org.springframework.context.ApplicationContext;
@@ -14,6 +15,7 @@ import searchengine.model.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SearchServiceImpl implements SearchService {
@@ -113,6 +115,10 @@ public class SearchServiceImpl implements SearchService {
                     .build();
         }
 
+        var siteUrls = sites.stream().map(Site::getUrl).distinct().toList();
+        log.info("Начат поиск \"{}\" в списке сайтов: {}", query, siteUrls);
+        var start = System.currentTimeMillis();
+
         var absoluteRelevance = computeAbsoluteRelevance(lemmas);
         var relativeRelevance = computeRelativeRelevance(absoluteRelevance);
 
@@ -120,9 +126,14 @@ public class SearchServiceImpl implements SearchService {
         var lemmasNames = lemmasFinder.findLemmas(query).keySet();
         var data = getSearchData(relativeRelevance, limit, offset, lemmasNames);
 
+        var foundCount = relativeRelevance.size();
+
+        log.info("Поиск \"{}\" выполнен за {} мс. Найдено результатов: {}. Список сайтов: {}.",
+                query, System.currentTimeMillis() - start, foundCount, siteUrls);
+
         return SearchResponse.builder()
                 .result(true)
-                .count(relativeRelevance.size())
+                .count(foundCount)
                 .data(data)
                 .build();
     }

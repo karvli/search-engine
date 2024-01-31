@@ -4,6 +4,7 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
 import org.jsoup.HttpStatusException;
 import org.jsoup.Jsoup;
 import org.jsoup.UnsupportedMimeTypeException;
@@ -24,6 +25,7 @@ import java.util.concurrent.RecursiveAction;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+@Slf4j
 @RequiredArgsConstructor
 @Getter
 @Setter
@@ -154,6 +156,7 @@ public class PageAnalyzer extends RecursiveAction {
         }
 
         if (page.isRoot() && site.getStatus() == IndexingStatus.INDEXING) {
+            log.info("Завершено полное индексирование {} с URL {}", site.getName(), site.getUrl());
             site.setStatus(IndexingStatus.INDEXED);
             saveSite(site);
         }
@@ -171,24 +174,24 @@ public class PageAnalyzer extends RecursiveAction {
             var response = Jsoup.connect(page.getUrl())
                     .userAgent(searchBot.getUserAgent())
                     .referrer(searchBot.getReferer())
-//                    .ignoreContentType(true)
                     .execute();
             statusCode = response.statusCode();
             document = response.parse();
         } catch (HttpStatusException e) {
             // Ошибка не связана напрямую с программой - подробное описание анализировать не требуется
             System.out.println(e.getLocalizedMessage());
+            log.info("{}: {}", page.getUrl(), e.getLocalizedMessage());
 
             statusCode = e.getStatusCode();
             page.setCode(statusCode);
             savePage(page);
 
             updateSite(site);
-
             return;
         } catch (UnsupportedMimeTypeException e) {
             // По ссылке не страница, а, например, картинка. Не ошибка. Но такие страницы не нужны - удаляем их.
             System.out.println(e.getLocalizedMessage());
+            log.info("{}: {}", page.getUrl(), e.getLocalizedMessage());
 
             page.setCode(415); // Unsupported Media Type («Неподдерживаемый тип данных»)
             savePage(page);
@@ -202,7 +205,6 @@ public class PageAnalyzer extends RecursiveAction {
             savePage(page);
 
             saveError(site, e);
-
             return;
         }
 
@@ -421,7 +423,8 @@ public class PageAnalyzer extends RecursiveAction {
             try {
                 pageRepository.save(page);
             } catch (Exception e) {
-                saveError(page.getSite(), e);
+                var error = page.getPath().concat(": ").concat(e.getLocalizedMessage());
+                saveError(page.getSite(), error);
                 throw e;
             }
         }
@@ -433,6 +436,8 @@ public class PageAnalyzer extends RecursiveAction {
     }
 
     private void saveError(Site site, String error) {
+        log.error("{} - {}", site.getUrl(), error);
+
         site.setLastError(error);
         site.setStatus(IndexingStatus.FAILED);
         updateSite(site);

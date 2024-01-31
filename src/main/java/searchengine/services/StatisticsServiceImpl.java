@@ -1,6 +1,7 @@
 package searchengine.services;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.util.Streamable;
 import org.springframework.stereotype.Service;
 import searchengine.dto.statistics.DetailedStatisticsItem;
@@ -14,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class StatisticsServiceImpl implements StatisticsService {
@@ -25,6 +27,8 @@ public class StatisticsServiceImpl implements StatisticsService {
 
     @Override
     public StatisticsResponse getStatistics() {
+
+        var start = System.currentTimeMillis();
 
         var sitesFromDB = Streamable.of(siteRepository.findAll()).toList();
         var isIndexing = sitesFromDB.stream().anyMatch(site -> site.getStatus() == IndexingStatus.INDEXING);
@@ -65,6 +69,9 @@ public class StatisticsServiceImpl implements StatisticsService {
         data.setDetailed(detailed);
         response.setStatistics(data);
         response.setResult(true);
+
+        log.info("Запрос статистики сформирован за {} мс.", System.currentTimeMillis() - start);
+
         return response;
     }
 
