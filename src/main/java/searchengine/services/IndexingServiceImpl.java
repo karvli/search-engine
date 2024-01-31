@@ -245,6 +245,7 @@ public class IndexingServiceImpl implements IndexingService {
                 try {
                     finalDeletingThread.join();
                 } catch (InterruptedException e) {
+                    log.error(e.getLocalizedMessage());
                     throw new RuntimeException(e);
                 }
             }

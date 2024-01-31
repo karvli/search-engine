@@ -115,8 +115,8 @@ public class SearchServiceImpl implements SearchService {
                     .build();
         }
 
-        var siteNames = sites.stream().map(Site::getName).toList();
-        log.info("Начат поиск \"{}\" в списке сайтов: {}", query, siteNames);
+        var siteUrls = sites.stream().map(Site::getUrl).distinct().toList();
+        log.info("Начат поиск \"{}\" в списке сайтов: {}", query, siteUrls);
         var start = System.currentTimeMillis();
 
         var absoluteRelevance = computeAbsoluteRelevance(lemmas);
@@ -129,7 +129,7 @@ public class SearchServiceImpl implements SearchService {
         var foundCount = relativeRelevance.size();
 
         log.info("Поиск \"{}\" выполнен за {} мс. Найдено результатов: {}. Список сайтов: {}.",
-                query, System.currentTimeMillis() - start, foundCount, siteNames);
+                query, System.currentTimeMillis() - start, foundCount, siteUrls);
 
         return SearchResponse.builder()
                 .result(true)
