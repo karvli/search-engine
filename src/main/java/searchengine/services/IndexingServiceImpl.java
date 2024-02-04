@@ -1,8 +1,8 @@
 package searchengine.services;
 
+import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import lombok.val;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,10 +38,8 @@ public class IndexingServiceImpl implements IndexingService {
 
     @Override
     public synchronized IndexingResponse startIndexing() {
-
         var siteSettings = sites.getSites();
         var urls = siteSettings.stream().map(Site::getUrl).toList();
-
         var currentSites = siteRepository.findByUrlIn(urls);
 
         if (!indexingTasks.isEmpty() // На случай перезапуска приложения в процессе индексации
@@ -49,34 +47,18 @@ public class IndexingServiceImpl implements IndexingService {
             var error = indexingCancelling ? "Предыдущая индексация ещё останавливается"
                     : "Индексация уже запущена";
 
-            return IndexingResponse.builder()
-                    .result(false)
-                    .error(error)
-                    .build();
+            return IndexingResponse.builder().result(false).error(error).build();
         }
 
         indexingCancelling = false;
-
-        var now = LocalDateTime.now();
-
         var indexingSites = new ArrayList<searchengine.model.Site>();
         var rootPages = new ArrayList<Page>();
 
         for (Site site : sites.getSites()) {
-
-            var newSite = new searchengine.model.Site();
-            newSite.setName(site.getName());
-            newSite.setUrl(site.getUrl());
-            newSite.setStatus(IndexingStatus.INDEXING);
-            newSite.setStatusTime(now);
-
+            var newSite = createSite(site);
             indexingSites.add(newSite);
 
-            var page = new Page();
-            page.setSite(newSite);
-            page.setPath("/");
-            page.setCode(102); // Processing («Идёт обработка»)
-
+            var page = createPage(newSite, "/");
             rootPages.add(page);
 
             // Чтобы запретить запуск нового индексирования
@@ -86,7 +68,14 @@ public class IndexingServiceImpl implements IndexingService {
             indexingTasks.add(task);
         }
 
-        new Thread(() -> {
+        getStartIndexingThread(currentSites, indexingSites, rootPages).start();
+
+        return IndexingResponse.builder().result(true).build();
+    }
+
+    private Thread getStartIndexingThread(List<searchengine.model.Site> currentSites,
+                                          ArrayList<searchengine.model.Site> indexingSites, ArrayList<Page> rootPages) {
+        return new Thread(() -> {
             log.info("Запуск полной индексации");
             var start = System.currentTimeMillis();
 
@@ -102,11 +91,7 @@ public class IndexingServiceImpl implements IndexingService {
             } else {
                 log.info("Полная индексация выполнена за {} мс.", System.currentTimeMillis() - start);
             }
-        }).start();
-
-        return IndexingResponse.builder()
-                .result(true)
-                .build();
+        });
     }
 
     @Override
@@ -115,20 +100,19 @@ public class IndexingServiceImpl implements IndexingService {
         var indexingSites = siteRepository.findByStatusAndUrlIn(IndexingStatus.INDEXING, urls);
 
         if (indexingSites.isEmpty()) {
-            return IndexingResponse.builder()
-                    .result(false)
-                    .error("Индексация не запущена")
-                    .build();
+            return IndexingResponse.builder().result(false).error("Индексация не запущена").build();
         } else if (indexingCancelling) {
-            return IndexingResponse.builder()
-                    .result(false)
-                    .error("Индексация уже останавливается")
-                    .build();
+            return IndexingResponse.builder().result(false).error("Индексация уже останавливается").build();
         }
 
         indexingCancelling = true;
+        getStopIndexingThread(indexingSites).start();
 
-        new Thread(() -> {
+        return IndexingResponse.builder().result(true).build();
+    }
+
+    private Thread getStopIndexingThread(List<searchengine.model.Site> indexingSites) {
+        return new Thread(() -> {
             log.info("Запуск остановки полной индексации");
             var start = System.currentTimeMillis();
 
@@ -154,24 +138,97 @@ public class IndexingServiceImpl implements IndexingService {
             indexingTasks.clear(); // Чтобы разрешить запуск нового индексирования
 
             log.info("Полная индексация остановлена за {} мс.", System.currentTimeMillis() - start);
-        }).start();
-
-        return IndexingResponse.builder()
-                .result(true)
-                .build();
+        });
     }
 
     @Override
-    public synchronized IndexingResponse indexPage(String url) {
+    public synchronized IndexingResponse indexPage(@NonNull String url) {
         if (url.isBlank()) {
-            return IndexingResponse.builder()
-                    .result(false)
-                    .error("Не передано значение url")
-                    .build();
+            return IndexingResponse.builder().result(false).error("Не передано значение url").build();
         }
 
         url = url.toLowerCase();
+        Site configSite = findConfigSite(url);
+        if (configSite == null) {
+            var error = "Данная страница находится за пределами сайтов, указанных в конфигурационном файле";
+            return IndexingResponse.builder().result(false).error(error).build();
+        }
 
+        var site = siteRepository.findByUrl(configSite.getUrl());
+        var newSite = site == null;
+
+        Page oldPage = null;
+        var path = url.substring(configSite.getUrl().length());
+        path = PageAnalyzer.getNormalizedPath(site, path);
+
+        if (newSite) {
+            // В стандартной ситуации статусом управляет общий процесс. Но т.к. он не запускался, меняем статус.
+            site = createSite(configSite);
+        } else {
+            site.setStatusTime(LocalDateTime.now());
+            oldPage = pageRepository.findBySiteAndPath(site, path);
+        }
+        siteRepository.save(site);
+
+        if (oldPage != null && oldPage.getCode() == 102) {
+            // Страница уже в очереди на обновление. Дальнейшее действия не требуются.
+            return IndexingResponse.builder().result(true).build();
+        }
+
+        var newPage = createPage(site, path);
+        getIndexPageThread(oldPage, newPage, newSite).start();
+
+        return IndexingResponse.builder().result(true).build();
+    }
+
+    private Thread getIndexPageThread(Page oldPage, @NonNull Page newPage, boolean newSite) {
+        return new Thread(() -> {
+            var url = newPage.getUrl();
+
+            log.info("Запуск индексации страницы {}", url);
+            var start = System.currentTimeMillis();
+
+            if (oldPage != null) {
+                deleteLeLemmatizationInfo(oldPage);
+            }
+
+            pageRepository.save(newPage);
+
+            var pageAnalyzer = applicationContext.getBean(PageAnalyzer.class);
+            pageAnalyzer.setPage(newPage);
+            pageAnalyzer.analyzePage();
+
+            if (newSite) {
+                var site = newPage.getSite();
+                // Если общего процесса нет, определяем статус по этой странице
+                site.setStatus(IndexingStatus.INDEXED);
+                siteRepository.save(site);
+            }
+
+            log.info("Индексации страницы {} выполнена за {} мс.", url, System.currentTimeMillis() - start);
+        });
+    }
+
+    private searchengine.model.Site createSite(@NonNull Site site) {
+        var newSite = new searchengine.model.Site();
+        newSite.setName(site.getName());
+        newSite.setUrl(site.getUrl());
+        newSite.setStatus(IndexingStatus.INDEXING);
+        newSite.setStatusTime(LocalDateTime.now());
+
+        return newSite;
+    }
+
+    private Page createPage(@NonNull searchengine.model.Site site, @NonNull String path) {
+        var page = new Page();
+        page.setSite(site);
+        page.setPath(path);
+        page.setCode(102); // Processing («Идёт обработка»)
+
+        return page;
+    }
+
+    private Site findConfigSite(@NonNull String url) {
         Site configSite = null;
 
         for (var site : sites.getSites()) {
@@ -181,93 +238,7 @@ public class IndexingServiceImpl implements IndexingService {
                 break;
             }
         }
-        if (configSite == null) {
-            return IndexingResponse.builder()
-                    .result(false)
-                    .error("Данная страница находится за пределами сайтов, указанных в конфигурационном файле")
-                    .build();
-        }
-
-        var site = siteRepository.findByUrl(configSite.getUrl());
-        var newSite = site == null;
-        if (newSite) {
-            site = new searchengine.model.Site();
-            site.setName(configSite.getName());
-            site.setUrl(configSite.getUrl());
-
-            // В стандартной ситуации статусом управляет общий процесс. Но т.к. он не запускался, меняем статус.
-            site.setStatus(IndexingStatus.INDEXING);
-        }
-        site.setStatusTime(LocalDateTime.now());
-        siteRepository.save(site);
-
-        var path = url.substring(configSite.getUrl().length());
-        path = PageAnalyzer.getNormalizedPath(site, path);
-
-        Page page = null;
-        Thread deletingThread = null;
-
-        if (!newSite) {
-            page = pageRepository.findBySiteAndPath(site, path);
-        }
-
-        var newPage = page == null;
-
-        if (!newPage) {
-
-            if (page.getCode() == 102) {
-                // Страница уже в очереди на обновление. Дальнейшее действия не требуются.
-                return IndexingResponse.builder()
-                        .result(true)
-                        .build();
-            }
-
-            val finalPage = page;
-            deletingThread = new Thread(() -> deleteLeLemmatizationInfo(finalPage));
-            deletingThread.start();
-        }
-
-        page = new Page();
-        page.setSite(site);
-        page.setPath(path);
-        page.setCode(102);
-
-        val finalSite = site;
-        val finalPage = page;
-        val finalDeletingThread = deletingThread;
-        val finalUrl = url;
-
-        new Thread(() -> {
-            log.info("Запуск индексации страницы {}", finalUrl);
-            var start = System.currentTimeMillis();
-
-            if (finalDeletingThread != null) {
-                try {
-                    finalDeletingThread.join();
-                } catch (InterruptedException e) {
-                    log.error(e.getLocalizedMessage());
-                    throw new RuntimeException(e);
-                }
-            }
-
-            pageRepository.save(finalPage);
-
-            var pageAnalyzer = applicationContext.getBean(PageAnalyzer.class);
-            pageAnalyzer.setPage(finalPage);
-            pageAnalyzer.analyzePage();
-
-            if (newSite) {
-                // Если общего процесса нет, определяем статус по этой странице
-                finalSite.setStatus(IndexingStatus.INDEXED);
-                siteRepository.save(finalSite);
-            }
-
-            log.info("Индексации страницы {} выполнена за {} мс.", finalUrl, System.currentTimeMillis() - start);
-        }).start();
-
-        return IndexingResponse.builder()
-                .result(true)
-                .build();
+        return configSite;
     }
 
     // Удаление Page, Lemma, Index в соответствии с ТЗ

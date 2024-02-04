@@ -27,7 +27,7 @@ public class SearchServiceImpl implements SearchService {
     private final IndexRepository indexRepository;
 
     @Override
-    public SearchResponse searchSite(String siteUrl, String query, int limit, int offset) {
+    public SearchResponse searchSite(@NonNull String siteUrl, @NonNull String query, int limit, int offset) {
         if (siteUrl.endsWith("/")) {
             // Далее ожидается формат без слэша на конце
             siteUrl = siteUrl.substring(0, siteUrl.length() - 1);
@@ -38,19 +38,13 @@ public class SearchServiceImpl implements SearchService {
                 .map(searchengine.config.Site::getUrl)
                 .noneMatch(s -> s.equals(url));
         if (notInSettings) {
-            return SearchResponse.builder()
-                    .result(false)
-                    .error("Сайт не указан в настройках индексации")
-                    .build();
+            return SearchResponse.builder().result(false).error("Сайт не указан в настройках индексации").build();
         }
 
         var site = siteRepository.findByUrl(siteUrl);
         if (site == null || site.getStatus() == IndexingStatus.INDEXING) {
             // Индексация ещё не выполнена. Failed не учитывается, т.к. это тоже статус "завершения" индексации.
-            return SearchResponse.builder()
-                    .result(false)
-                    .error("Индексация сайта ещё не завершена")
-                    .build();
+            return SearchResponse.builder().result(false).error("Индексация сайта ещё не завершена").build();
         }
 
         var sites = List.of(site);
@@ -58,7 +52,7 @@ public class SearchServiceImpl implements SearchService {
     }
 
     @Override
-    public SearchResponse searchAllSites(String query, int limit, int offset) {
+    public SearchResponse searchAllSites(@NonNull String query, int limit, int offset) {
         // Дополнительный отбор на случай изменения состава сайтов в настройках.
         var sitesInSettings = sitesSettings.getSites().stream()
                 .map(searchengine.config.Site::getUrl)
@@ -67,19 +61,14 @@ public class SearchServiceImpl implements SearchService {
         var sitesInDB = siteRepository.findByUrlIn(sitesInSettings);
 
         if (sitesInSettings.size() != sitesInDB.size()) {
-            return SearchResponse.builder()
-                    .result(false)
-                    .error("Индексация части сайтов из настроек не запускалась")
+            return SearchResponse.builder().result(false).error("Индексация части сайтов из настроек не запускалась")
                     .build();
         }
 
         var indexingInProcess = sitesInDB.stream()
                 .anyMatch(site -> site.getStatus() == IndexingStatus.INDEXING);
         if (indexingInProcess) {
-            return SearchResponse.builder()
-                    .result(false)
-                    .error("Индексация части сайтов ещё не завершена")
-                    .build();
+            return SearchResponse.builder().result(false).error("Индексация части сайтов ещё не завершена").build();
         }
 
         return search(sitesInDB, query, limit, offset);
@@ -87,32 +76,19 @@ public class SearchServiceImpl implements SearchService {
 
     private SearchResponse search(List<Site> sites, String query, int limit, int offset) {
         if (query == null || query.isBlank()) {
-            return SearchResponse.builder()
-                    .result(false)
-                    .error("Задан пустой поисковый запрос")
-                    .build();
+            return SearchResponse.builder().result(false).error("Задан пустой поисковый запрос").build();
         }
         if (limit <= 0) {
-            return SearchResponse.builder()
-                    .result(false)
-                    .error("Параметр limit должен быть больше нуля")
-                    .build();
+            return SearchResponse.builder().result(false).error("Параметр limit должен быть больше нуля").build();
         }
         if (offset < 0) {
-            return SearchResponse.builder()
-                    .result(false)
-                    .error("Параметр offset не может быть отрицательным")
-                    .build();
+            return SearchResponse.builder().result(false).error("Параметр offset не может быть отрицательным").build();
         }
 
         var lemmas = findLemmas(sites, query);
 
         if (lemmas.isEmpty()) {
-            return SearchResponse.builder()
-                    .result(true)
-                    .count(0)
-                    .data(Collections.emptyList())
-                    .build();
+            return SearchResponse.builder().result(true).count(0).data(Collections.emptyList()).build();
         }
 
         var siteUrls = sites.stream().map(Site::getUrl).distinct().toList();
@@ -131,14 +107,10 @@ public class SearchServiceImpl implements SearchService {
         log.info("Поиск \"{}\" выполнен за {} мс. Найдено результатов: {}. Список сайтов: {}.",
                 query, System.currentTimeMillis() - start, foundCount, siteUrls);
 
-        return SearchResponse.builder()
-                .result(true)
-                .count(foundCount)
-                .data(data)
-                .build();
+        return SearchResponse.builder().result(true).count(foundCount).data(data).build();
     }
 
-    private Map<Site, List<Lemma>> findLemmas(@NonNull List<Site> sites, @NonNull String query) {
+    private Map<Site, List<Lemma>> findLemmas(List<Site> sites, String query) {
         if (sites.isEmpty() || query.isBlank()) {
             return Collections.emptyMap();
         }
@@ -156,7 +128,7 @@ public class SearchServiceImpl implements SearchService {
     }
 
     // Собирает информацию обо всех сайтах. Корректность группировки данных по сайтам не проверяется.
-    private Map<Page, Float> computeAbsoluteRelevance(@NonNull Map<Site, List<Lemma>> lemmas) {
+    private Map<Page, Float> computeAbsoluteRelevance(Map<Site, List<Lemma>> lemmas) {
 
         if (lemmas.isEmpty()) {
             return Collections.emptyMap();
@@ -177,7 +149,7 @@ public class SearchServiceImpl implements SearchService {
     }
 
     // Собирает информацию об одном сайте
-    private Map<Page, Float> computeAbsoluteRelevance(@NonNull List<Lemma> lemmas) {
+    private Map<Page, Float> computeAbsoluteRelevance(List<Lemma> lemmas) {
         if (lemmas.isEmpty()) {
             return Collections.emptyMap();
         }

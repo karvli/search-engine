@@ -56,7 +56,7 @@ public class LemmasFinder {
      * @param html текст html, в котором будут найдены русские и английские леммы
      * @return соответствие, где ключ - лемма, а значение - сколько раз она встречается в text
      */
-    public HashMap<String, Integer> findLemmasInHtml(@NonNull String html) {
+    public Map<String, Integer> findLemmasInHtml(@NonNull String html) {
         var text = htmlToText(html);
         return findLemmas(text);
     }
@@ -107,11 +107,8 @@ public class LemmasFinder {
     private boolean addLineToSnippet(String line, Set<String> lemmas, StringBuilder snippet, boolean spoilerAdded) {
         var words = line.split("[\u00a0\\s]+");
         var wordsIndexes = new ArrayList<Integer>(); // Индексы значимых слов
-
-        var wordsRange = searchSettings.getWordsRange(); // Количество значимых слов слева и справа от леммы
-
         var lastLemmaIndex = -1; // Последняя добавленное слово леммы (для определения границ слов)
-        var lastWordIndex = -1; // Последнее добавленное слово (не только леммы)
+        var lastWordIndex = -1;  // Последнее добавленное слово (не только леммы)
 
         for (var i = 0; i < words.length; i++) {
             var word = words[i];
@@ -126,97 +123,132 @@ public class LemmasFinder {
 
             var normalWord = getNormalWord(searchWord); // Нормальная форма всегда в нижнем регистре
             if (!lemmas.contains(normalWord)) {
-
                 // Слово, не являющееся искомой леммой
-
-                if (lastLemmaIndex == -1) {
-                    continue;
-                }
-
-                var endWordIndex = lastLemmaIndex + wordsRange; // Текст "до" текущего слова
-                if (wordIndex <= endWordIndex) {
-                    // Подсказка (уточнение) после слова леммы
-                    int startIndex = wordsIndexes.get(lastLemmaIndex);
-                    startIndex = Math.max(startIndex, lastWordIndex) + 1; // После последнего добавленного
-                    for (int j = startIndex; j <= i; j++) {
-                        snippet.append(' ').append(words[j]);
-                    }
-
-                    lastWordIndex = i;
-                } else if (wordIndex == (endWordIndex + 1)) {
-                    // Многоточие после окончание отрывка текста
-                    snippet.append(" ...");
-                }
-
+                lastWordIndex = correctFragmentRightBoundary(snippet, lastLemmaIndex, wordsIndexes, lastWordIndex,
+                        i, words);
                 continue;
             }
 
             // Новое слово леммы
-
-            if (snippet.length() > 270 && !spoilerAdded) {
-                snippet.append("<details>");
-                spoilerAdded = true;
-            }
-
-            var snippetLength = snippet.length(); // Нет смысла смотреть строки короче "<b></b>"
-            var checkB = snippetLength >= 7 && lastLemmaIndex >= 0;
-
-            if (i > 0) {
-                if (lastLemmaIndex == -1
-                        // Многоточие могло быть уже добавлена на предыдущей строке
-                        && !(snippetLength >= 3 && snippet.substring(snippetLength - 3).equals("..."))) {
-                    snippet.append("...");
-                }
-
-                if (lastWordIndex < i - 1) {
-                    checkB = false;
-
-                    // Проверка и дополнение подсказки до слова леммы
-                    int previousIndex = wordsIndexes.get(Math.max(wordIndex - wordsRange, 0));
-                    if (lastWordIndex >= 0) {
-                        previousIndex = Math.max(lastWordIndex + 1, previousIndex);
-                    }
-                    for (int j = previousIndex; j < i; j++) {
-                        snippet.append(' ').append(words[j]);
-                    }
-                }
-            }
-
-            snippet.append(' ');
-
-            var endPrefixIndex = word.indexOf(searchWord);
-            if (endPrefixIndex > 0) {
-                snippet.append(word, 0, endPrefixIndex);
-                checkB = false;
-            }
-
-
-            if (checkB && wordsIndexes.get(lastLemmaIndex) == i - 1) {
-                // Продолжение блока <b>: надо удалить ранее добавленный закрывающий тег, но оставить пробел после него
-                snippet.replace(snippetLength - 4, snippetLength, "");
-            } else {
-                // Новый блок <b>
-                snippet.append("<b>");
-            }
-
-            snippet.append(searchWord).append("</b>");
-
-            var startPostfixIndex = endPrefixIndex + searchWord.length();
-            if (startPostfixIndex < word.length()) {
-                snippet.append(word, startPostfixIndex, word.length());
-            }
+            spoilerAdded = checkAndAddSpoiler(snippet, spoilerAdded);
+            var checkTagB = correctFragmentLeftBoundary(snippet, lastLemmaIndex, i, lastWordIndex,
+                    wordsIndexes, words);
+            addLemmaWord(snippet, lastLemmaIndex, i, wordsIndexes, words, searchWord, checkTagB);
 
             lastWordIndex = i;
             lastLemmaIndex = wordIndex;
         }
 
+        correctSnippetEnd(snippet, lastWordIndex, words);
+
+        return spoilerAdded;
+    }
+
+    private void addLemmaWord(StringBuilder snippet, int lastLemmaIndex, int currentIndex, ArrayList<Integer> wordsIndexes,
+                              String[] words, String searchWord, boolean checkTagB) {
+        var snippetLength = snippet.length(); // Нет смысла смотреть строки короче "<b></b>"
+        checkTagB = checkTagB && (snippetLength >= 7 && lastLemmaIndex >= 0);
+
+        snippet.append(' ');
+
+        var word = words[currentIndex];
+        var endPrefixIndex = word.indexOf(searchWord);
+        if (endPrefixIndex > 0) {
+            snippet.append(word, 0, endPrefixIndex);
+            checkTagB = false;
+        }
+
+        if (checkTagB && wordsIndexes.get(lastLemmaIndex) == currentIndex - 1) {
+            // Продолжение блока <b>: надо удалить ранее добавленный закрывающий тег, но оставить пробел после него
+            snippet.replace(snippetLength - 4, snippetLength, "");
+        } else {
+            // Новый блок <b>
+            snippet.append("<b>");
+        }
+
+        snippet.append(searchWord).append("</b>");
+
+        var startPostfixIndex = endPrefixIndex + searchWord.length();
+        if (startPostfixIndex < word.length()) {
+            snippet.append(word, startPostfixIndex, word.length());
+        }
+    }
+
+    private boolean checkAndAddSpoiler(StringBuilder snippet, boolean spoilerAdded) {
+        if (snippet.length() > 270 && !spoilerAdded) {
+            snippet.append("<details>");
+            spoilerAdded = true;
+        }
+        return spoilerAdded;
+    }
+
+    private boolean correctFragmentLeftBoundary(StringBuilder snippet, int lastLemmaIndex, int currentIndex, int lastWordIndex,
+                                                ArrayList<Integer> wordsIndexes, String[] words) {
+        boolean checkTagB = true;
+
+        if (currentIndex < 1) {
+            return checkTagB;
+        }
+
+        var snippetLength = snippet.length(); // Нет смысла смотреть строки короче "<b></b>"
+        if (lastLemmaIndex == -1
+                // Многоточие могло быть уже добавлена на предыдущей строке
+                && !(snippetLength >= 3 && snippet.substring(snippetLength - 3).equals("..."))) {
+            snippet.append("...");
+        }
+
+        if (lastWordIndex < currentIndex - 1) {
+            checkTagB = false;
+
+            // Проверка и дополнение подсказки до слова леммы
+            var wordsRange = searchSettings.getWordsRange(); // Количество значимых слов слева и справа от леммы
+            var wordIndex = wordsIndexes.size() - 1; // Для последующего поиска значимых слов
+            int previousIndex = wordsIndexes.get(Math.max(wordIndex - wordsRange, 0));
+            if (lastWordIndex >= 0) {
+                previousIndex = Math.max(lastWordIndex + 1, previousIndex);
+            }
+            for (int j = previousIndex; j < currentIndex; j++) {
+                snippet.append(' ').append(words[j]);
+            }
+        }
+
+        return checkTagB;
+    }
+
+    private int correctFragmentRightBoundary(StringBuilder snippet, int lastLemmaIndex,
+                                             ArrayList<Integer> wordsIndexes, int lastWordIndex,
+                                             int currentIndex, String[] words) {
+        if (lastLemmaIndex == -1) {
+            return lastWordIndex;
+        }
+
+        var wordsRange = searchSettings.getWordsRange(); // Количество значимых слов слева и справа от леммы
+        var wordIndex = wordsIndexes.size() - 1; // Для последующего поиска значимых слов
+
+        var endWordIndex = lastLemmaIndex + wordsRange; // Текст "до" текущего слова
+        if (wordIndex <= endWordIndex) {
+            // Подсказка (уточнение) после слова леммы
+            int startIndex = wordsIndexes.get(lastLemmaIndex);
+            startIndex = Math.max(startIndex, lastWordIndex) + 1; // После последнего добавленного
+            for (int j = startIndex; j <= currentIndex; j++) {
+                snippet.append(' ').append(words[j]);
+            }
+
+            lastWordIndex = currentIndex;
+        } else if (wordIndex == (endWordIndex + 1)) {
+            // Многоточие после окончание отрывка текста
+            snippet.append(" ...");
+        }
+
+        return lastWordIndex;
+    }
+
+    private void correctSnippetEnd(StringBuilder snippet, int lastWordIndex, String[] words) {
         var startIndex = snippet.length() - 3;
         if (lastWordIndex != words.length - 1 && startIndex >= 0 && !snippet.substring(startIndex).equals("...")) {
             // Частный случай: после последнего слова леммы в строке недостаточно значимых слов
             snippet.append(" ...");
         }
-
-        return spoilerAdded;
     }
 
     /**
