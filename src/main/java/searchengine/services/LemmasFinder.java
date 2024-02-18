@@ -308,7 +308,11 @@ public class LemmasFinder {
             return false;
         }
 
-        return morphology.getMorphInfo(word).stream().filter(s -> !s.isBlank()).map(String::toUpperCase).map(s -> s.split("\\s+")).flatMap(Arrays::stream).noneMatch(PARTICLES::contains);
+        return morphology.getMorphInfo(word).stream()
+                .filter(s -> !s.isBlank()).map(String::toUpperCase)
+                .map(s -> s.split("\\s+"))
+                .flatMap(Arrays::stream)
+                .noneMatch(PARTICLES::contains);
     }
 
     /**
