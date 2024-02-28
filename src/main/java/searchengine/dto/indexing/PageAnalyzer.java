@@ -233,7 +233,7 @@ public class PageAnalyzer extends RecursiveAction {
             // Ошибка не связана напрямую с программой - подробное описание анализировать не требуется
             registerHttpStatusException(e);
         } catch (UnsupportedMimeTypeException e) {
-            // По ссылке не страница, а, например, картинка. Не ошибка. Но такие страницы не нужны - удаляем их.
+            // По ссылке не страница, а, например, картинка. Не ошибка. Дальнейший анализ таких страниц не нужен.
             registerMimeTypeException(e);
         } catch (Exception e) {
             registerUndefinedException(e);
@@ -299,7 +299,7 @@ public class PageAnalyzer extends RecursiveAction {
     }
 
     private Lemma analyzeLemma(String lemmaName, Map<String, Lemma> lemmasCache, List<Lemma> usedLemmas,
-                                        List<Lemma> changedLemmas, List<Lemma> unchangedLemmas) {
+                               List<Lemma> changedLemmas, List<Lemma> unchangedLemmas) {
         var lemma = lemmasCache.get(lemmaName);
         var frequency = 1;
         var newLemma = lemma == null;
@@ -539,7 +539,7 @@ public class PageAnalyzer extends RecursiveAction {
     }
 
     private void registerUndefinedException(Exception e) {
-        log.info("{}: {}", page.getUrl(), e.getLocalizedMessage());
+        log.error("{}: {}", page.getUrl(), e.getLocalizedMessage());
 
         page.setCode(500); // Internal Server Error («Внутренняя ошибка сервера»)
         savePage(page);
